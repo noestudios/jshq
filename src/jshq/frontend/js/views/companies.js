@@ -456,6 +456,18 @@ function atsBody(company) {
     }</div>`;
 }
 
+/* Refresh only the detail pane's ATS-health block for one company, in place.
+   That block is a sibling of the URL inputs, so swapping its innerHTML surfaces
+   a re-detect's 'checking' spinner (and its settled result) WITHOUT rebuilding
+   the field the user is typing in — the case a full paint() must skip while an
+   input holds focus (see save() and the watcher). No-ops if that company's
+   detail isn't on screen. */
+function repaintAtsHealth(company) {
+  if (!company || !root) return;
+  const wrap = root.querySelector(`.ats-health-wrap[data-ats-id="${company.id}"]`);
+  if (wrap) wrap.innerHTML = atsBody(company);
+}
+
 /* Collapsible "Company settings" (QA pass 1): the field grid + ATS health,
    collapsed by default behind a chevron header carrying the same ats pill as
    the list row. The body is rendered-or-omitted, not height-animated — the
@@ -513,7 +525,7 @@ function settingsSection(company) {
         </div>
       </div>
       <div class="ats-subhead field-label">ATS health</div>
-      ${atsBody(company)}
+      <div class="ats-health-wrap" data-ats-id="${company.id}">${atsBody(company)}</div>
     </div>`
           : ""
       }
@@ -747,8 +759,14 @@ async function save(company, overrides, { quiet = false } = {}) {
       const editing =
         root.contains(document.activeElement) &&
         document.activeElement.matches?.("input, textarea, select");
-      if (editing) repaintList();
-      else paint();
+      if (editing) {
+        repaintList();
+        // The list row flips to 'checking', but the detail pane — where the
+        // edit happened — would otherwise sit on the stale state until focus
+        // leaves. Update just its ATS-health block so the re-detect is visibly
+        // running (the settle paint catches the rest up once editing stops).
+        repaintAtsHealth(updated);
+      } else paint();
     }
     // A changed website/careers URL makes the backend re-probe for an ATS (the
     // PUT response comes back pre-stamped 'checking'): watch it settle like an
@@ -898,7 +916,13 @@ function startWatcher() {
       document.activeElement.matches?.("input, textarea, select");
     const touchedSelected = changed.some(({ next }) => next.id === state.selectedId);
     if (touchedSelected && (!editing || drained)) paint();
-    else repaintList();
+    else {
+      repaintList();
+      // Editing in the detail pane suppresses the full paint; keep its
+      // ATS-health block current (checking -> settled) without stealing focus.
+      if (touchedSelected)
+        repaintAtsHealth(state.companies.find((c) => c.id === state.selectedId));
+    }
   }, ATS_POLL_MS);
 }
 
