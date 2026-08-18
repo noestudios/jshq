@@ -1,8 +1,9 @@
 # Job Search HQ (jshq)
 
-**Status: pre-release, under active development.**
+**Status: beta, a solo project under active development.** Issues and
+feedback are welcome; there are no formal support or stability guarantees yet.
 
-A private, local-first job-search dashboard: track target companies, pull their
+A personal, local-first job-search dashboard: track target companies, pull their
 openings directly from applicant-tracking-system job boards, score every
 posting against your own written fit criteria (optionally with AI, using your
 own Anthropic API key), and manage applications, contacts, and reminders, all
