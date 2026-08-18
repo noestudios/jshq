@@ -24,6 +24,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 IN_SCOPE = {
     "README.md": REPO_ROOT / "README.md",
     "PRIVACY.md": REPO_ROOT / "PRIVACY.md",
+    "CONTRIBUTING.md": REPO_ROOT / "CONTRIBUTING.md",
+    "SECURITY.md": REPO_ROOT / "SECURITY.md",
     "docs/CASE-STUDY.md": REPO_ROOT / "docs" / "CASE-STUDY.md",
     "user-manual.md": paths.DEFAULTS_DIR / "user-manual.md",
 }
