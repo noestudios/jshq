@@ -1,0 +1,65 @@
+[
+  {
+    "file": "good_director_mentoring.txt",
+    "label": "good",
+    "title": "Director, Product Design \u2014 Core Platform",
+    "note": "people-leader, mentoring-forward, inherited team"
+  },
+  {
+    "file": "good_head_of_design.txt",
+    "label": "good",
+    "title": "Head of Design",
+    "note": "inherited senior team, design-fluent CPO, craft focus"
+  },
+  {
+    "file": "bad_ic_director.txt",
+    "label": "bad",
+    "title": "Director, Product Design (Individual Contributor)",
+    "note": "IC despite title; evangelism-heavy; the flat-72 bug case"
+  },
+  {
+    "file": "bad_evangelism.txt",
+    "label": "bad",
+    "title": "Design Leader, Experience Transformation",
+    "note": "sell design into rooms; no team; travel"
+  },
+  {
+    "file": "bad_convert_sell_vp.txt",
+    "label": "bad",
+    "title": "Vice President, Design Advocacy and Alignment",
+    "note": "executive stakeholder conversion as the job"
+  },
+  {
+    "file": "mixed_balanced.txt",
+    "label": "mixed",
+    "title": "Senior Design Manager, Growth Products",
+    "note": "genuine craft+convert balance; expect mid-band"
+  },
+  {
+    "file": "capped_ic_craft_heavy.txt",
+    "label": "capped",
+    "title": "Senior / Staff Product Designer",
+    "note": "regression: craft-first IC the model read people_leader; must read ic and cap"
+  },
+  {
+    "file": "wrong_function_pm_director.txt",
+    "label": "wrong_function",
+    "title": "Director of Product, Home Design Platform",
+    "note": "wrong-function pair, PM side: design-adjacent vocabulary around a PM core; must read leads product and cap",
+    "expect_leads": "product"
+  },
+  {
+    "file": "control_design_director.txt",
+    "label": "control",
+    "title": "Director, UX Product Design",
+    "note": "wrong-function pair, design side: genuine design leadership on near-identical boilerplate; must read leads design, no function flag",
+    "expect_leads": "design"
+  },
+  {
+    "file": "wrong_function_content_director.txt",
+    "label": "wrong_function",
+    "title": "Senior Director, Content Design - Consumer Banking",
+    "expect_leads": "content",
+    "note": "the content-class miss: with no 'content' token in DISCIPLINES a content-director role read 'design' and escaped the cap; must read leads content and cap"
+  }
+]

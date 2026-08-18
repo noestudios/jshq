@@ -1,0 +1,20 @@
+{
+  "items": [
+    {
+      "Id": "30000001",
+      "Title": "Director, Product Design",
+      "PrimaryLocation": "Chicago, IL, United States",
+      "PrimaryLocationCountry": "US",
+      "WorkplaceTypeCode": null,
+      "WorkplaceType": "",
+      "ExternalDescriptionStr": "<div>\n <p>Lead the product design org for the Exampleco Rewards platform.</p>\n <p>The salary range for this position is $150,000 to $190,000 annually.</p>\n</div>",
+      "ExternalResponsibilitiesStr": "<ul>\n <li>Own design strategy end to end.</li>\n</ul>",
+      "ExternalQualificationsStr": "<ul>\n <li>10+ years leading design teams.</li>\n</ul>"
+    }
+  ],
+  "count": 1,
+  "hasMore": false,
+  "limit": 1,
+  "offset": 0,
+  "links": []
+}

@@ -1,0 +1,25 @@
+# Personal data (never committed)
+data/
+.env
+
+*.docx
+
+# Local doc renders (the .md in docs/ is the source of truth)
+docs/*.pdf
+docs/*.xlsx
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+dist/
+*.egg-info/
+
+# macOS
+.DS_Store
+
+# Logs
+*.log
+
+# Agent/editor local files
+.claude/

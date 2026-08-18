@@ -1,0 +1,40 @@
+{
+  "totalCount": 4,
+  "count": 4,
+  "jobs": [
+    {
+      "data": {
+        "req_id": "30001",
+        "slug": "30001",
+        "title": "Director, Product Design",
+        "full_location": "Chicago, IL, United States",
+        "short_location": "Chicago, IL",
+        "location_type": "LAT_LNG",
+        "tags2": ["No"],
+        "tags6": ["Headquarters"],
+        "tags8": ["$150,000.00 - $190,000.00 Yearly"],
+        "salary_min_value": 0,
+        "salary_max_value": 0,
+        "apply_url": "https://careers-exampleco.icims.com/jobs/30001/login",
+        "ats_code": "icims",
+        "client_code": "exampleco",
+        "meta_data": {"canonical_url": "https://careers.exampleco.com/jobs/30001?lang=en-us"},
+        "description": "<p>Lead our product <strong>design</strong> org.</p>",
+        "responsibilities": "<ul><li>Own the design roadmap</li></ul>",
+        "qualifications": "<p>10+ years leading design teams.</p>"
+      }
+    },
+    {
+      "data": {
+        "req_id": "30002",
+        "slug": "30002",
+        "title": "Staff Accountant",
+        "full_location": "Chicago, IL, United States",
+        "location_type": "LAT_LNG",
+        "tags8": ["$80,000.00 - $95,000.00 Yearly"],
+        "meta_data": {"canonical_url": "https://careers.exampleco.com/jobs/30002?lang=en-us"},
+        "description": "<p>Keep the books.</p>"
+      }
+    }
+  ]
+}

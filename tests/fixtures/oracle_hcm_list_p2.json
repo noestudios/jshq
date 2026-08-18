@@ -1,0 +1,26 @@
+{
+  "items": [
+    {
+      "SearchId": null,
+      "SiteNumber": "CX",
+      "TotalJobsCount": 3,
+      "requisitionList": [
+        {
+          "Id": "30000003",
+          "Title": "Senior UX Researcher",
+          "PostedDate": "2026-06-11",
+          "PrimaryLocationCountry": "US",
+          "PrimaryLocation": "Remote, United States",
+          "WorkplaceTypeCode": "ORA_REMOTE",
+          "WorkplaceType": "Remote",
+          "ShortDescriptionStr": ""
+        }
+      ]
+    }
+  ],
+  "count": 1,
+  "hasMore": false,
+  "limit": 2,
+  "offset": 2,
+  "links": []
+}

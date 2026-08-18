@@ -1,0 +1,68 @@
+[
+  {
+    "id": "a1b2c3d4-0001",
+    "text": "Sr. Director, Product Design",
+    "workplaceType": "remote",
+    "country": "US",
+    "categories": {
+      "commitment": "Full-Time",
+      "department": "Product",
+      "location": "Remote(US)",
+      "team": "Product Design",
+      "allLocations": ["Remote(US)"]
+    },
+    "descriptionPlain": "About Us\nExampleCo builds tools people love.\n\nAbout the Role\nLead and grow our product design org of 8 designers across two squads.",
+    "lists": [
+      {"text": "Responsibilities", "content": "<li>Mentor &amp; grow senior designers</li><li>Own the design system roadmap</li>"},
+      {"text": "Requirements", "content": "<li>10+ years in product design, 5+ leading design teams</li>"}
+    ],
+    "additionalPlain": "ExampleCo is an equal opportunity employer.",
+    "salaryRange": {"currency": "USD", "interval": "per-year-salary", "min": 196000, "max": 250000},
+    "hostedUrl": "https://jobs.lever.co/exampleco/a1b2c3d4-0001",
+    "createdAt": 1753900000000
+  },
+  {
+    "id": "a1b2c3d4-0002",
+    "text": "Senior Product Designer",
+    "workplaceType": "unspecified",
+    "country": "US",
+    "categories": {
+      "commitment": "Full-Time",
+      "department": "Product",
+      "location": "Dallas, TX",
+      "allLocations": ["Dallas, TX"]
+    },
+    "descriptionPlain": "Design core flows end to end. Compensation: $150,000 - $180,000 per year plus equity.",
+    "lists": [],
+    "additionalPlain": "",
+    "hostedUrl": "https://jobs.lever.co/exampleco/a1b2c3d4-0002",
+    "createdAt": 1753900000000
+  },
+  {
+    "id": "a1b2c3d4-0003",
+    "text": "Sr. UX Researcher",
+    "workplaceType": "hybrid",
+    "country": "US",
+    "categories": {
+      "location": "New York, NY",
+      "allLocations": ["New York, NY"]
+    },
+    "descriptionPlain": "Run mixed-methods research across the platform.",
+    "lists": [],
+    "additionalPlain": "",
+    "salaryRange": {"currency": "USD", "interval": "per-hour-wage", "min": 60, "max": 75},
+    "hostedUrl": "https://jobs.lever.co/exampleco/a1b2c3d4-0003",
+    "createdAt": 1753900000000
+  },
+  {
+    "id": "a1b2c3d4-0004",
+    "text": "Account Executive, Mid-Market",
+    "workplaceType": "remote",
+    "categories": {"location": "Remote(US)", "allLocations": ["Remote(US)"]},
+    "descriptionPlain": "Own the full sales cycle for mid-market accounts.",
+    "lists": [],
+    "additionalPlain": "",
+    "hostedUrl": "https://jobs.lever.co/exampleco/a1b2c3d4-0004",
+    "createdAt": 1753900000000
+  }
+]

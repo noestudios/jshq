@@ -1,0 +1,133 @@
+{
+ "model": "claude-haiku-4-5",
+ "saved_at": "2026-08-16T11:20:57-04:00",
+ "results": {
+  "good_director_mentoring.txt": {
+   "label": "good",
+   "final": 90,
+   "model_score": 90,
+   "mgmt": "people_leader",
+   "leads": "design",
+   "func_flag": null,
+   "flags": [],
+   "evidenced": 10,
+   "confidence": "high"
+  },
+  "good_head_of_design.txt": {
+   "label": "good",
+   "final": 91,
+   "model_score": 91,
+   "mgmt": "people_leader",
+   "leads": "design",
+   "func_flag": null,
+   "flags": [],
+   "evidenced": 11,
+   "confidence": "high"
+  },
+  "bad_ic_director.txt": {
+   "label": "bad",
+   "final": 28,
+   "model_score": 28,
+   "mgmt": "ic",
+   "leads": "design",
+   "func_flag": null,
+   "flags": [
+    "below_band"
+   ],
+   "evidenced": 8,
+   "confidence": "high"
+  },
+  "bad_evangelism.txt": {
+   "label": "bad",
+   "final": 16,
+   "model_score": 26,
+   "mgmt": "ic",
+   "leads": "unclear",
+   "func_flag": null,
+   "flags": [
+    "convert_sell_undertone",
+    "scope_gap"
+   ],
+   "evidenced": 9,
+   "confidence": "high"
+  },
+  "bad_convert_sell_vp.txt": {
+   "label": "bad",
+   "final": 15,
+   "model_score": 25,
+   "mgmt": "ic",
+   "leads": "unclear",
+   "func_flag": null,
+   "flags": [
+    "convert_sell_undertone",
+    "scope_gap"
+   ],
+   "evidenced": 8,
+   "confidence": "high"
+  },
+  "mixed_balanced.txt": {
+   "label": "mixed",
+   "final": 64,
+   "model_score": 64,
+   "mgmt": "people_leader",
+   "leads": "design",
+   "func_flag": null,
+   "flags": [
+    "convert_sell_undertone"
+   ],
+   "evidenced": 10,
+   "confidence": "high"
+  },
+  "capped_ic_craft_heavy.txt": {
+   "label": "capped",
+   "final": 50,
+   "model_score": 70,
+   "mgmt": "ic",
+   "leads": "design",
+   "func_flag": null,
+   "flags": [
+    "below_band"
+   ],
+   "evidenced": 10,
+   "confidence": "high"
+  },
+  "wrong_function_pm_director.txt": {
+   "label": "wrong_function",
+   "final": 15,
+   "model_score": 65,
+   "mgmt": "people_leader",
+   "leads": "product",
+   "func_flag": "wrong_function",
+   "flags": [
+    "convert_sell_undertone",
+    "wrong_function"
+   ],
+   "evidenced": 9,
+   "confidence": "high"
+  },
+  "control_design_director.txt": {
+   "label": "control",
+   "final": 93,
+   "model_score": 93,
+   "mgmt": "people_leader",
+   "leads": "design",
+   "func_flag": null,
+   "flags": [],
+   "evidenced": 10,
+   "confidence": "high"
+  },
+  "wrong_function_content_director.txt": {
+   "label": "wrong_function",
+   "final": 15,
+   "model_score": 90,
+   "mgmt": "people_leader",
+   "leads": "content",
+   "func_flag": "wrong_function",
+   "flags": [
+    "wrong_function"
+   ],
+   "evidenced": 10,
+   "confidence": "high"
+  }
+ }
+}

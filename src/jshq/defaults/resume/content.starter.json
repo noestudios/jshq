@@ -1,0 +1,64 @@
+{
+  "version": 1,
+  "name": "Your Name",
+  "title": "Your Professional Title",
+  "contact": {
+    "email": "you@example.com",
+    "phone": "555 000 0000",
+    "location": "Your Town, ST"
+  },
+  "sections": [
+    {
+      "id": "summary",
+      "type": "paragraph",
+      "heading": "Summary",
+      "text": "Two or three sentences on who you are professionally and what you want next. Replace every placeholder in this file with your own details — resume tailoring rewrites THIS content per posting, so the better this is, the better the drafts."
+    },
+    {
+      "id": "skills",
+      "type": "columns",
+      "heading": "Skills",
+      "columns": 3,
+      "items": [
+        "A skill",
+        "Another skill",
+        "A tool you know",
+        "A method you use",
+        "A strength",
+        "A certification"
+      ]
+    },
+    {
+      "id": "experience",
+      "type": "roles",
+      "heading": "Experience",
+      "roles": [
+        {
+          "id": "role-current",
+          "title": "Most Recent Title — Employer",
+          "dates": "2022 – present",
+          "bullets": [
+            { "id": "role-current-1", "text": "What you owned, and the outcome it produced." },
+            { "id": "role-current-2", "text": "A second accomplishment — with a number, if you have one." }
+          ]
+        },
+        {
+          "id": "role-prior",
+          "title": "Prior Title — Prior Employer",
+          "dates": "2018 – 2022",
+          "bullets": [
+            { "id": "role-prior-1", "text": "The most important thing you did there." }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "education",
+      "type": "keyvalue",
+      "heading": "Education",
+      "rows": [
+        { "label": "Degree", "text": "Your degree — Institution, year" }
+      ]
+    }
+  ]
+}

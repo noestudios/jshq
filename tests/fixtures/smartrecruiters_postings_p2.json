@@ -1,0 +1,23 @@
+{
+  "limit": 2,
+  "offset": 2,
+  "totalFound": 3,
+  "content": [
+    {
+      "id": "6000000000000003",
+      "uuid": "4cd501c9-9fe9-4da6-ba0a-000000000003",
+      "name": "Senior UX Researcher",
+      "refNumber": "REF0003A",
+      "releasedDate": "2026-06-03T15:41:57.577Z",
+      "location": {
+        "city": "Melbourne",
+        "region": "VIC",
+        "country": "au",
+        "remote": true,
+        "hybrid": false,
+        "fullLocation": "Melbourne, VIC, Australia"
+      },
+      "ref": "https://api.smartrecruiters.com/v1/companies/exampleco/postings/6000000000000003"
+    }
+  ]
+}

@@ -1,0 +1,39 @@
+{
+  "limit": 2,
+  "offset": 0,
+  "totalFound": 3,
+  "content": [
+    {
+      "id": "6000000000000001",
+      "uuid": "4cd501c9-9fe9-4da6-ba0a-000000000001",
+      "name": "Design Lead, Brand",
+      "refNumber": "REF0001A",
+      "releasedDate": "2026-06-01T15:41:57.577Z",
+      "location": {
+        "city": "Sydney",
+        "region": "NSW",
+        "country": "au",
+        "remote": false,
+        "hybrid": true,
+        "fullLocation": "Sydney, NSW, Australia"
+      },
+      "ref": "https://api.smartrecruiters.com/v1/companies/exampleco/postings/6000000000000001"
+    },
+    {
+      "id": "6000000000000002",
+      "uuid": "4cd501c9-9fe9-4da6-ba0a-000000000002",
+      "name": "Data Engineer",
+      "refNumber": "REF0002A",
+      "releasedDate": "2026-06-02T15:41:57.577Z",
+      "location": {
+        "city": "Sydney",
+        "region": "NSW",
+        "country": "au",
+        "remote": false,
+        "hybrid": false,
+        "fullLocation": "Sydney, NSW, Australia"
+      },
+      "ref": "https://api.smartrecruiters.com/v1/companies/exampleco/postings/6000000000000002"
+    }
+  ]
+}

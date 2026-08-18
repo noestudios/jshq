@@ -1,0 +1,176 @@
+/* Resume print styles — the design half of the template.
+   Metrics extracted from the source resume document (twips → pt) and
+   tuned against the blessed reference PDF. Agents edit content.json, never
+   this file. Carlito = metric-compatible Calibri (doc font; not installed
+   on this Mac). */
+
+@font-face {
+  font-family: "Carlito";
+  src: url("fonts/Carlito-Regular.ttf");
+  font-weight: 400;
+  font-style: normal;
+}
+@font-face {
+  font-family: "Carlito";
+  src: url("fonts/Carlito-Bold.ttf");
+  font-weight: 700;
+  font-style: normal;
+}
+@font-face {
+  font-family: "Carlito";
+  src: url("fonts/Carlito-Italic.ttf");
+  font-weight: 400;
+  font-style: italic;
+}
+@font-face {
+  font-family: "Carlito";
+  src: url("fonts/Carlito-BoldItalic.ttf");
+  font-weight: 700;
+  font-style: italic;
+}
+
+@page {
+  size: letter;
+  /* reference PDF margins (measured): 36pt top/bottom, 54pt sides —
+     the Google Docs export, not the docx's 45pt pgMar */
+  margin: 36pt 54pt;
+}
+
+body {
+  margin: 0;
+  font-family: "Carlito", Calibri, sans-serif;
+  font-size: 10pt;
+  color: #222222;
+  /* normal = Carlito's natural 1.2207 line box — matches the reference's
+     header, table, and heading leading (measured from its PDF ops) */
+  line-height: normal;
+  -webkit-print-color-adjust: exact;
+}
+
+a {
+  color: #1155cc;
+}
+
+/* ---- header ---- */
+
+.name {
+  margin: 0;
+  font-size: 24pt;
+  font-weight: 700;
+  /* natural line box — puts the baseline at 58.7pt like the reference */
+}
+
+.title {
+  margin: 4pt 0 4pt;
+  font-size: 12pt;
+  color: #555555;
+}
+
+.contact {
+  margin: 0;
+  color: #555555;
+}
+
+/* padding, not margin: a margin would collapse into the first h2's 9pt
+   margin-top. +2pt lands the SUMMARY rule at the reference 126.5pt. */
+header {
+  padding-bottom: 2pt;
+}
+
+/* ---- sections ---- */
+
+h2 {
+  margin: 9pt 0 3pt; /* before 180 / after 60 twips */
+  padding-bottom: 2pt;
+  font-size: 11pt;
+  border-bottom: 0.75pt solid #888888;
+  break-after: avoid;
+}
+
+p.body {
+  margin: 2pt 0 0;
+  line-height: 1.42; /* reference summary leading (measured) */
+}
+
+/* avoid widows/orphans: no single-word last lines (owner, fidelity pass) */
+p.body,
+li,
+.cols div,
+.kv div {
+  text-wrap: pretty;
+}
+
+/* bullets: docx ind left 280 hanging 200 twips → text 14pt, glyph at 4pt */
+ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* Bullet marker stays in normal flow — position:absolute/relative here puts
+   bullets in a later PDF paint layer, scrambling the text-extraction order
+   ATS parsers read (role heads grouped, then all bullets). Geometry matches
+   the docx: glyph at 4pt, text at 14pt, wrapped lines at 14pt. */
+li {
+  margin-top: 1.4pt; /* reference inter-bullet gap (measured) */
+  padding-left: 14pt;
+  line-height: 1.357; /* reference bullet leading 13.57pt @ 10pt (measured) */
+  break-inside: avoid;
+}
+
+li::before {
+  content: "\2022";
+  display: inline-block;
+  width: 10pt;
+  margin-left: -10pt;
+}
+
+/* ---- core competencies / technical skills tables ---- */
+
+.cols {
+  display: grid;
+  row-gap: 5.1pt; /* reference table row pitch 16.7pt (measured) */
+}
+
+.cols-3 {
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.kv {
+  display: grid;
+  grid-template-columns: 85pt 1fr; /* docx gridCol 1700/8380 twips */
+  row-gap: 1.5pt;
+}
+
+.kv .label {
+  font-weight: 700;
+}
+
+/* ---- roles ---- */
+
+/* inter-role gap as margin-bottom: truncated at page breaks (a top margin
+   would push the first role of a new page below the reference's position) */
+.role {
+  margin-bottom: 12.4pt; /* reference inter-role gap (measured) */
+}
+
+.role:last-of-type {
+  margin-bottom: 0;
+}
+
+.role-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  break-after: avoid;
+}
+
+.role-title {
+  font-size: 11pt;
+  font-weight: 700;
+}
+
+.role-dates {
+  font-style: italic;
+  color: #555555;
+}

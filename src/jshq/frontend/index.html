@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>Job Search HQ</title>
+    <meta
+      name="description"
+      content="A local-first job-search dashboard: postings pulled automatically, screened against location, comp, and level, then scored against criteria you write yourself."
+    />
+
+    <!-- No share-card (og:/twitter:) metadata. It existed for one hosted demo
+         linked from social, and its absolute URLs were the only ones in the
+         bundle — a deploy host baked into markup that every install serves.
+         This app runs on 127.0.0.1; nothing crawls a loopback address. -->
+
+    <!-- Regenerate the raster pair from the SVG with scripts/make_favicon.py. -->
+    <link rel="icon" href="favicon.ico" sizes="16x16 32x32 48x48" />
+    <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="apple-touch-icon.png" />
+    <meta name="theme-color" content="#121518" />
+    <!-- Theme boot: must stay ABOVE the stylesheet links so a stored light
+         preference never flashes dark. Mirrors js/lib/theme.js (which owns
+         runtime switching) and MUST be changed with it; the hexes mirror
+         --t-bg-elev per theme and theme.js re-syncs the meta from computed
+         style after CSS loads.
+
+         Absent preference = DARK, not the OS setting. Dark is the primary
+         design theme and the toggle is buried in Settings, so tracking the OS
+         put most first-time visitors to the public demo on a light theme they
+         never chose. The OS is still followed, but only when it is asked for
+         explicitly — which is why "system" is a STORED value here rather than
+         the absence of one. -->
+    <script>
+      (() => {
+        let t = null;
+        try { t = localStorage.getItem("hq_theme"); } catch {}
+        if (t === "system")
+          t = matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+        else if (t !== "light" && t !== "dark") t = "dark";
+        document.documentElement.dataset.theme = t;
+        document.querySelector('meta[name="theme-color"]').content =
+          t === "light" ? "#f3f6f9" : "#121518";
+      })();
+    </script>
+    <!-- Self-hosted (Phase 1, zero-phone-home): faces + weight/ital ranges are
+         explained in css/fonts.css, licenses in fonts/OFL-*.txt.
+
+         Fraunces is gone as of the logotype swap. --t-font-display had exactly one
+         consumer in the whole app (.brand-mark), and the wordmark is outlined SVG
+         now, so the family was two faces of dead payload plus a render-blocking
+         round trip. Nothing renders a serif; do not re-add it without one. -->
+    <link rel="stylesheet" href="css/fonts.css" />
+    <link rel="stylesheet" href="css/tokens.css" />
+    <link rel="stylesheet" href="css/app.css" />
+  </head>
+  <body>
+    <!-- Skip link (A11Y): first tab stop, visually hidden until focused, so a
+         keyboard user can jump past the nav straight into the view. href is a
+         no-slash "#view" that the hash router (which matches "#/route") ignores,
+         and app.js preventDefaults it and focuses #view directly — so it never
+         pollutes the route. -->
+    <a class="skip-link" href="#view">Skip to main content</a>
+    <header class="topbar">
+      <div class="topbar-inner">
+        <div class="topbar-row">
+          <div class="brand">
+            <!-- The wordmark, outlined. Source of truth is docs/brand/jshq-logotype.svg
+                 (the owner's Illustrator export, committed unmodified). This is that file with
+                 the <defs><style> stripped and two substitutions applied: .st1 ->
+                 currentColor on the svg root, .st0 -> var(--t-accent) via .brand-hq in
+                 app.css. Edit the artwork THERE, not here.
+
+                 Inline rather than <img> because only inline SVG can read the theme
+                 tokens: one file serves both themes with no swap logic and no boot flash.
+                 The fill is split across an attribute AND css because var() is not
+                 supported in SVG presentation attributes (Chrome and Firefox drop it
+                 silently) while currentColor is. The root fill also means this degrades
+                 to a legible monochrome wordmark if app.css never arrives.
+
+                 A light export exists and is deliberately NOT committed: same artwork,
+                 re-exported, so its path data differs by node count and cannot be diffed
+                 against this one. It is redundant -- the two colours it carried are
+                 exactly --t-ink and --t-accent in the light block.
+
+                 The href is #/today rather than "/" so it never leaves the app: a
+                 root-relative href would escape the demo bundle when it is deployed
+                 under a subpath, and this avoids a full reload. -->
+            <a class="brand-mark" href="#/today" aria-label="Job Search HQ"><svg
+              class="brand-logotype" viewBox="0 0 300.23 49.05"
+              fill="currentColor" aria-hidden="true">
+              <g class="brand-word">
+                <path d="M16.42,28.61c0,1.82-.79,3.29-2.36,4.4-1.57,1.11-3.68,1.67-6.31,1.67-2.45,0-4.36-.55-5.72-1.66-1.36-1.1-2.04-2.58-2.04-4.42,0-1.01.26-1.84.77-2.47.51-.64,1.22-.95,2.13-.95.75,0,1.37.26,1.84.77.47.51.71,1.23.71,2.15v1.52c0,.86.2,1.53.6,2.01.4.48,1.07.72,2.02.72s1.69-.25,2.27-.75c.58-.5.86-1.25.86-2.24,0-.72-.14-1.37-.41-1.94-.28-.58-.6-1.17-.98-1.79s-.7-1.35-.97-2.2-.4-1.91-.4-3.2V6.9c0-.57-.15-1-.44-1.3-.29-.3-.73-.52-1.31-.66l-1.15-.32c-.43-.11-.74-.29-.93-.54s-.29-.55-.29-.89c0-.44.13-.79.4-1.02.27-.24.68-.36,1.23-.36h10.37c.54,0,.94.12,1.2.36.26.24.39.58.39,1.02,0,.67-.38,1.16-1.15,1.45l-1.01.28c-.48.15-.85.38-1.12.67-.27.29-.4.73-.4,1.31v12.72c0,1.17.11,2.14.33,2.93.22.79.48,1.48.76,2.07.28.59.54,1.2.76,1.82.22.62.33,1.35.33,2.17Z"/>
+                <path d="M31.63,12.03c2.25,0,4.24.48,5.97,1.44,1.72.96,3.07,2.29,4.03,3.98.96,1.69,1.44,3.64,1.44,5.83s-.49,4.07-1.47,5.76c-.98,1.69-2.35,3.04-4.09,4.03s-3.78,1.48-6.1,1.48-4.2-.49-5.93-1.47c-1.73-.98-3.08-2.32-4.05-4.03-.97-1.7-1.45-3.67-1.45-5.89s.49-4.01,1.48-5.69,2.35-3.01,4.09-3.98c1.74-.97,3.77-1.46,6.08-1.46ZM33.42,31.54c1.1-.23,2.01-.76,2.73-1.6.71-.84,1.19-1.92,1.43-3.27.24-1.34.18-2.84-.17-4.5-.38-1.76-.96-3.22-1.73-4.37s-1.66-1.97-2.67-2.45-2.11-.6-3.29-.36c-1.09.18-2.01.7-2.75,1.54-.74.84-1.23,1.93-1.46,3.27-.23,1.33-.17,2.84.18,4.51.37,1.76.94,3.22,1.72,4.37s1.69,1.97,2.74,2.46,2.13.62,3.27.39Z"/>
+                <path d="M51.84,1.43v30.2l-1.93,1.86c-.35.2-.72.38-1.1.54-.38.16-.76.24-1.13.24-.29,0-.54-.1-.75-.31s-.31-.5-.31-.89V5.87c0-.52-.08-.89-.23-1.1-.15-.21-.39-.35-.71-.41l-1.29-.07c-.29-.09-.52-.23-.69-.4-.17-.18-.25-.4-.25-.68,0-.32.1-.59.3-.81s.51-.38.92-.51l3.56-1.26c.46-.18.88-.33,1.25-.45.38-.12.72-.17,1.02-.17.4,0,.72.13.97.39.25.26.37.61.37,1.04ZM50.58,19.53l-.85-1.61c1.12-1.84,2.47-3.28,4.05-4.31,1.58-1.04,3.3-1.55,5.15-1.55s3.5.45,4.92,1.36c1.43.91,2.54,2.17,3.33,3.78.8,1.62,1.2,3.49,1.2,5.62,0,2.39-.48,4.47-1.44,6.22-.96,1.76-2.24,3.11-3.85,4.07-1.61.96-3.41,1.44-5.41,1.44-1.84,0-3.49-.47-4.95-1.42-1.46-.94-2.61-2.23-3.47-3.85l1.33-2.07c.75,1.46,1.67,2.56,2.75,3.3,1.08.74,2.24,1.12,3.49,1.12,1.13,0,2.17-.32,3.1-.97s1.66-1.58,2.19-2.82.78-2.73.78-4.5-.26-3.15-.79-4.36c-.53-1.2-1.25-2.12-2.17-2.76-.92-.64-1.96-.95-3.1-.95-1.32,0-2.5.36-3.54,1.09-1.04.73-1.95,1.78-2.71,3.16Z"/>
+                <path d="M93.06,34.73c-1.27,0-2.37-.13-3.28-.4-.91-.27-1.66-.53-2.25-.78-.59-.25-1.02-.38-1.28-.38-.23,0-.43.08-.59.23-.16.15-.31.33-.45.53-.14.2-.29.38-.45.55-.16.17-.37.25-.61.25-.43,0-.76-.12-.99-.37-.23-.25-.4-.63-.51-1.15l-1.59-6.26c-.08-.4-.04-.74.12-1.02s.42-.49.8-.61c.4-.09.76-.06,1.07.09.31.15.61.47.88.94.69,1.21,1.5,2.22,2.42,3.04.92.81,1.92,1.42,2.99,1.83,1.07.41,2.19.61,3.36.61,1.69,0,3-.44,3.93-1.31s1.41-1.94,1.43-3.2c0-.83-.18-1.6-.55-2.31-.37-.71-1.05-1.39-2.04-2.02-.99-.64-2.43-1.28-4.31-1.94-2.64-.84-4.72-1.8-6.25-2.88-1.53-1.07-2.62-2.28-3.28-3.61s-.99-2.77-.99-4.3c0-1.79.41-3.38,1.24-4.75.83-1.37,1.99-2.43,3.5-3.19s3.26-1.13,5.27-1.13c1.32,0,2.43.13,3.35.4s1.67.54,2.27.82c.6.28,1.07.41,1.43.41.31,0,.54-.14.71-.41.17-.28.34-.55.53-.83.18-.28.45-.41.8-.41.4,0,.72.13.97.4.25.27.48.76.71,1.46l1.98,6.46c.15.51.14.93-.03,1.28-.18.34-.48.56-.91.66-.37.12-.71.1-1.01-.08-.31-.18-.58-.46-.83-.86-.78-1.46-1.68-2.65-2.69-3.59-1.01-.94-2.09-1.63-3.23-2.09-1.14-.46-2.32-.69-3.53-.69-1.59,0-2.86.46-3.81,1.38-.94.92-1.41,2.05-1.41,3.38,0,.94.21,1.79.63,2.58.42.78,1.13,1.5,2.12,2.15s2.32,1.29,3.99,1.92c2.7.89,4.81,1.87,6.34,2.94,1.53,1.07,2.6,2.23,3.22,3.46.62,1.23.93,2.61.93,4.13,0,1.59-.4,3.04-1.2,4.35-.8,1.3-1.95,2.35-3.45,3.14-1.5.79-3.33,1.18-5.47,1.18Z"/>
+                <path d="M125.86,20.2c0,.97-.28,1.7-.83,2.2-.55.5-1.33.75-2.35.75h-14.08v-2.05h10.44c1,0,1.5-.44,1.5-1.31,0-1.53-.43-2.76-1.29-3.67-.86-.91-1.97-1.37-3.33-1.37-1.07,0-2.03.29-2.88.87-.84.58-1.51,1.41-2,2.48-.49,1.07-.74,2.36-.74,3.86,0,2.82.71,4.98,2.12,6.47,1.41,1.5,3.23,2.24,5.45,2.24,1.52,0,2.8-.34,3.85-1.03,1.05-.69,1.83-1.49,2.33-2.39.21-.21.41-.38.58-.51.17-.12.34-.18.51-.16.23,0,.41.08.55.25.14.17.21.42.21.76-.05,1.18-.47,2.3-1.26,3.36-.8,1.06-1.89,1.92-3.28,2.59-1.39.67-3,1-4.84,1-2.25,0-4.2-.47-5.84-1.42-1.64-.94-2.91-2.23-3.82-3.88-.91-1.64-1.36-3.55-1.36-5.73s.46-4.2,1.37-5.92,2.2-3.09,3.86-4.09c1.66-1,3.64-1.51,5.92-1.51,1.83,0,3.43.36,4.82,1.07,1.39.71,2.46,1.68,3.23,2.91.77,1.23,1.15,2.63,1.15,4.21Z"/>
+                <path d="M128.76,29.17c0-1.89.85-3.43,2.55-4.62,1.7-1.2,3.98-1.79,6.83-1.79.92,0,1.81.08,2.67.23.86.15,1.6.35,2.23.6l-.46,1.93c-.58-.21-1.2-.39-1.84-.53-.64-.14-1.33-.21-2.07-.21-1.41,0-2.53.3-3.35.9s-1.23,1.46-1.23,2.58c0,1.04.33,1.84.99,2.4.66.56,1.5.84,2.51.84s2.01-.25,2.94-.75c.93-.5,1.73-1.18,2.39-2.06l.58,1.73c-.92,1.32-2.11,2.34-3.58,3.06-1.46.72-3.02,1.08-4.66,1.08-1.93,0-3.5-.48-4.7-1.43s-1.81-2.27-1.81-3.96ZM142.49,31.19v-.78l-.39-.46v-12.08c0-1.15-.33-2.04-.99-2.67-.66-.63-1.57-.94-2.74-.94-1,0-1.78.21-2.35.62s-.85.92-.85,1.52v1.5c0,.78-.26,1.39-.78,1.82-.52.43-1.24.64-2.16.64-.81,0-1.43-.21-1.85-.62-.42-.41-.63-.97-.63-1.66,0-1,.39-1.96,1.16-2.89.77-.93,1.92-1.68,3.43-2.27,1.51-.58,3.35-.87,5.51-.87,2.5,0,4.36.56,5.59,1.69,1.23,1.13,1.84,2.64,1.84,4.54v11.75c0,.34.08.6.24.79.16.19.4.29.72.29.21,0,.39-.03.54-.09.15-.06.26-.14.36-.23.12-.09.23-.17.31-.24.08-.07.2-.1.33-.1.25,0,.45.08.6.25s.23.41.23.74c0,.49-.16.98-.49,1.46-.33.48-.79.88-1.39,1.18-.6.31-1.3.46-2.12.46-1.18,0-2.16-.29-2.94-.87-.78-.58-1.17-1.41-1.17-2.48Z"/>
+                <path d="M160.07,13.73l.3,5.04v10.79c0,.51.1.91.31,1.22s.53.48.96.53l1.84.25c.41.05.71.18.9.41.18.23.28.51.28.83,0,.38-.12.68-.36.89s-.56.31-.98.31h-9.5c-.43,0-.76-.1-1-.3-.24-.2-.36-.5-.36-.9,0-.29.08-.53.24-.72.16-.19.39-.36.7-.52l.83-.23c.31-.11.55-.29.72-.56.18-.27.26-.67.26-1.21v-11.55c0-.51-.08-.86-.24-1.07s-.38-.36-.66-.45l-1.31-.07c-.31-.09-.54-.23-.71-.4-.17-.18-.25-.41-.25-.7s.1-.55.31-.77c.21-.22.52-.39.93-.52l3.54-1.24c.46-.17.85-.32,1.18-.45.33-.13.62-.2.86-.2.35,0,.63.11.83.34s.32.64.37,1.24ZM159.35,21.94c0-2.16.32-3.98.95-5.46.64-1.48,1.49-2.6,2.55-3.35,1.07-.75,2.22-1.13,3.46-1.13,1.35,0,2.41.4,3.19,1.21s1.16,1.92,1.16,3.35c0,1.12-.24,1.96-.71,2.53-.48.57-1.1.85-1.86.85s-1.4-.2-1.82-.61-.62-.96-.62-1.67v-.76c.01-.51-.12-.88-.39-1.12-.28-.24-.61-.36-1.01-.36-.67,0-1.31.24-1.9.71-.59.48-1.07,1.19-1.44,2.14-.37.95-.55,2.13-.55,3.54l-1.01.11Z"/>
+                <path d="M192.06,18.17c0,.8-.26,1.46-.77,2-.51.54-1.19.81-2.04.81s-1.48-.23-1.91-.69c-.43-.46-.64-1.1-.64-1.91v-.6c0-.9-.35-1.64-1.06-2.2-.71-.56-1.68-.84-2.92-.84-1.1,0-2.09.3-2.97.89-.87.59-1.56,1.43-2.06,2.52s-.75,2.37-.75,3.84c0,1.82.33,3.37.98,4.65.65,1.27,1.54,2.24,2.68,2.89s2.42.98,3.86.98c1.55,0,2.81-.31,3.77-.94.97-.63,1.7-1.38,2.21-2.25.26-.25.47-.43.62-.54.15-.12.31-.17.46-.17.26-.02.45.07.58.24.12.18.18.43.18.77-.05,1.23-.46,2.36-1.25,3.4-.79,1.04-1.87,1.89-3.25,2.55-1.38.66-2.98.99-4.81.99-2.12,0-4-.46-5.64-1.39-1.64-.93-2.92-2.21-3.83-3.84-.91-1.63-1.37-3.54-1.37-5.72s.47-4.17,1.4-5.92c.93-1.76,2.26-3.14,3.97-4.15,1.71-1.01,3.7-1.52,5.97-1.52,1.76,0,3.28.29,4.55.87,1.27.58,2.26,1.34,2.97,2.27.71.93,1.06,1.94,1.06,3.02Z"/>
+                <path d="M202.6,1.43v28.13c0,.61.08,1.05.23,1.3s.4.44.74.56l.78.25c.57.28.85.66.85,1.15,0,.78-.43,1.17-1.29,1.17h-7.98c-.41,0-.74-.1-.99-.3s-.37-.5-.37-.9c0-.29.08-.54.24-.74s.4-.37.72-.51l.78-.23c.32-.11.58-.29.77-.56.19-.27.29-.67.29-1.21V5.87c0-.52-.08-.89-.25-1.1-.17-.21-.4-.35-.69-.41l-1.31-.07c-.29-.09-.52-.23-.69-.4-.17-.18-.25-.4-.25-.68,0-.32.1-.59.31-.81s.52-.38.93-.51l3.52-1.26c.49-.2.92-.35,1.29-.46.37-.11.71-.16,1.04-.16.41,0,.74.13.98.39.24.26.36.61.36,1.04ZM201.91,18.93l-1.2-1.36,1.1-1.04c1.64-1.56,3.16-2.71,4.57-3.44,1.4-.73,2.74-1.09,4.01-1.09,1.79,0,3.2.57,4.23,1.7,1.03,1.13,1.66,2.71,1.89,4.72l1.31,11.13c.06.55.16.95.3,1.21.14.25.36.44.67.56l.78.23c.34.15.59.33.77.52.18.19.26.43.26.72,0,.4-.12.7-.37.9-.25.2-.6.3-1.06.3h-8c-.84,0-1.27-.39-1.27-1.17,0-.49.27-.87.8-1.15l.78-.25c.37-.12.64-.31.83-.58.18-.26.25-.69.21-1.29l-1.2-9.82c-.15-1.35-.51-2.35-1.06-3.01-.55-.66-1.37-.99-2.46-.99-.71,0-1.47.18-2.29.53-.82.35-1.71.97-2.68,1.84l-.94.83Z"/>
+              </g>
+              <g class="brand-hq">
+                <rect x="232.53" y=".71" width="6.98" height="33.29"/>
+                <rect x="253.46" y=".71" width="6.98" height="33.29"/>
+                <rect x="232.53" y="13.94" width="27.91" height="6.98"/>
+                <path d="M280.62,35.01c-9.62,0-17.44-7.82-17.44-17.44S271,.13,280.62.13s17.44,7.82,17.44,17.44-7.82,17.44-17.44,17.44ZM280.62,7.06c-5.8,0-10.51,4.72-10.51,10.51s4.72,10.51,10.51,10.51,10.51-4.72,10.51-10.51-4.72-10.51-10.51-10.51Z"/>
+                <rect x="287.6" y="28.79" width="8.14" height="19.57" transform="translate(22.47 157.28) rotate(-31.33)"/>
+              </g>
+            </svg></a>
+          </div>
+          <!-- Onboarding-completeness pill (Phase 4). A SEPARATE node from
+               #topbar-stats: setStats() rewrites that node's innerHTML on every
+               view paint and would wipe anything nested inside it. Ships hidden
+               so an empty box never joins the baseline-aligned .topbar-row (cf.
+               the .stats strut note in app.css); lib/onboardingTracker.js owns
+               its content and visibility. -->
+          <div id="onboarding-tracker" hidden></div>
+          <div class="stats" id="topbar-stats"></div>
+        </div>
+        <nav class="nav-tabs" id="nav-tabs">
+          <a class="nav-tab" href="#/today" data-route="today" title="Today" aria-label="Today">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/></svg>
+            <span class="nav-tab-label">Today</span>
+          </a>
+          <a class="nav-tab" href="#/jobs" data-route="jobs" title="Jobs" aria-label="Jobs">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/></svg>
+            <span class="nav-tab-label">Jobs</span>
+          </a>
+          <a class="nav-tab" href="#/applications" data-route="applications" title="Applications" aria-label="Applications">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4z"/></svg>
+            <span class="nav-tab-label">Applications</span>
+          </a>
+          <a class="nav-tab" href="#/companies" data-route="companies" title="Companies" aria-label="Companies">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 21V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v16"/><path d="M16 9h3a1 1 0 0 1 1 1v11"/><path d="M2 21h20"/><path d="M8 7h2M8 11h2M8 15h2"/></svg>
+            <span class="nav-tab-label">Companies</span>
+          </a>
+          <a class="nav-tab" href="#/contacts" data-route="contacts" title="Contacts" aria-label="Contacts">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.2 3.4-5 6.5-5s5.7 1.8 6.5 5"/><circle cx="17" cy="9" r="2.5"/><path d="M16.5 14.5c2.4.3 4.3 1.8 5 4.5"/></svg>
+            <span class="nav-tab-label">Contacts</span>
+          </a>
+          <a class="nav-tab" href="#/calendar" data-route="calendar" title="Calendar" aria-label="Calendar">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M8 3v4M16 3v4M3 10h18"/></svg>
+            <span class="nav-tab-label">Calendar</span>
+          </a>
+          <a class="nav-tab nav-help" href="#/help" data-route="help" title="Help" aria-label="Help">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg>
+            <span class="nav-tab-label">Help</span>
+          </a>
+          <a class="nav-tab nav-settings" href="#/settings" data-route="settings" title="Settings" aria-label="Settings">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+            <span class="nav-tab-label">Settings</span>
+          </a>
+        </nav>
+      </div>
+    </header>
+    <!-- tabindex="-1": not in the tab order, but focusable as the skip link's target. -->
+    <!-- Per-view page heading (A11Y): one persistent, visually-hidden <h1> that
+         app.js retitles per route and keeps as the FIRST CHILD of this <main>
+         landmark (moved inside it so the only <h1> is not orphaned outside every
+         region). Hidden for routes with their own visible <h1> (Settings, Help,
+         the wizard). See ensureViewHeading() in app.js. -->
+    <main id="view" tabindex="-1"></main>
+    <!-- Wizard step-change announcer (A11Y): a persistent polite live region.
+         The wizard repaints #view wholesale, so its announcer lives outside it. -->
+    <div id="wizard-live" class="sr-only" aria-live="polite"></div>
+    <script type="module" src="js/app.js"></script>
+  </body>
+</html>

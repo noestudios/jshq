@@ -1,0 +1,86 @@
+[
+ {
+  "portalJobPost": {
+   "portalId": 111,
+   "portalUrl": "https://careers-americas.icims.com/jobs/24872/x/job",
+   "id": 24872,
+   "updatedDate": "2099-01-15 10:05 PM"
+  },
+  "id": 24872,
+  "portalId": 111,
+  "title": "Senior Design Manager, Jira AI",
+  "locations": [
+   "San Francisco - United States -   San Francisco, California 94104 United States",
+   "Remote - Remote",
+   "Remote - Remote"
+  ],
+  "category": "Design",
+  "overview": "<p><strong>Working at Atlassian</strong></p><p>Atlassians can choose where they work.</p>",
+  "responsibilities": "<h2>About Jira</h2><p>Lead the Jira AI design team.</p>",
+  "qualifications": "<p><strong>Compensation</strong></p><p>At Atlassian, we strive to design equitable compensation programs. In the United States, we have three geographic pay zones. Zone A: $221,400 - $289,050 Zone B: $199,200 - $260,145 Zone C: $183,700 - $239,912 This role may also be eligible for benefits and equity.</p>",
+  "applyUrl": "https://careers-americas.icims.com/jobs/24872/x/job?mode=apply",
+  "compensation": null
+ },
+ {
+  "portalJobPost": {
+   "portalId": 111,
+   "portalUrl": "https://careers-americas.icims.com/jobs/24872/x/job",
+   "id": 24872,
+   "updatedDate": "2099-01-15 10:05 PM"
+  },
+  "id": 24872,
+  "portalId": 111,
+  "title": "Senior Design Manager, Jira AI",
+  "locations": [
+   "San Francisco - United States -   San Francisco, California 94104 United States",
+   "Remote - Remote"
+  ],
+  "category": "Design",
+  "overview": "<p>dup</p>",
+  "responsibilities": "<p>dup</p>",
+  "qualifications": "<p><strong>Compensation</strong></p><p>At Atlassian, we strive to design equitable compensation programs. In the United States, we have three geographic pay zones. Zone A: $221,400 - $289,050 Zone B: $199,200 - $260,145 Zone C: $183,700 - $239,912 This role may also be eligible for benefits and equity.</p>",
+  "applyUrl": "https://careers-americas.icims.com/jobs/24872/x/job?mode=apply",
+  "compensation": null
+ },
+ {
+  "portalJobPost": {
+   "portalId": 111,
+   "portalUrl": "https://careers-americas.icims.com/jobs/25349/x/job",
+   "id": 25349,
+   "updatedDate": "2099-01-15 10:05 PM"
+  },
+  "id": 25349,
+  "portalId": 111,
+  "title": "Lead Product Designer, Loom",
+  "locations": [
+   "San Francisco - United States -   San Francisco, California 94104 United States",
+   "Remote - Remote"
+  ],
+  "category": "Design",
+  "overview": "<p>Loom is async video.</p>",
+  "responsibilities": "<p>Own end-to-end design.</p>",
+  "qualifications": "<p>8+ years of product design experience.</p>",
+  "applyUrl": "https://careers-americas.icims.com/jobs/25349/x/job?mode=apply",
+  "compensation": "<p data-compensation='true'>At Atlassian, we strive to design equitable, explainable, and competitive compensation programs.</p>"
+ },
+ {
+  "portalJobPost": {
+   "portalId": 111,
+   "portalUrl": "https://careers-americas.icims.com/jobs/25431/x/job",
+   "id": 25431,
+   "updatedDate": "2099-01-15 10:05 PM"
+  },
+  "id": 25431,
+  "portalId": 111,
+  "title": "Account Executive, Enterprise New Logo Benelux and Nordics",
+  "locations": [
+   "Amsterdam - Netherlands"
+  ],
+  "category": "Design",
+  "overview": "<p>Sales.</p>",
+  "responsibilities": "<p>Sell.</p>",
+  "qualifications": "<p>Quota.</p>",
+  "applyUrl": "https://careers-americas.icims.com/jobs/25431/x/job?mode=apply",
+  "compensation": null
+ }
+]

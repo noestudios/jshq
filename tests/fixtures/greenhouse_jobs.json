@@ -1,0 +1,28 @@
+{
+  "jobs": [
+    {
+      "id": 5001001001,
+      "title": "Director of Product Design",
+      "absolute_url": "https://boards.greenhouse.io/exampleco/jobs/5001001001",
+      "location": { "name": "Remote - US" },
+      "updated_at": "2026-06-01T10:00:00-04:00",
+      "content": "&lt;div class=&quot;content&quot;&gt;&lt;p&gt;Lead our design org across product and brand.&lt;/p&gt;&lt;p&gt;The annual base pay range for this role is $180,000 - $220,000.&lt;/p&gt;&lt;/div&gt;"
+    },
+    {
+      "id": 5001001002,
+      "title": "Senior Product Designer",
+      "absolute_url": "https://boards.greenhouse.io/exampleco/jobs/5001001002",
+      "location": { "name": "New York, NY" },
+      "updated_at": "2026-06-02T09:00:00-04:00",
+      "content": "&lt;p&gt;Craft end-to-end product experiences with a small team.&lt;/p&gt;"
+    },
+    {
+      "id": 5001001003,
+      "title": "Software Engineer, Backend",
+      "absolute_url": "https://boards.greenhouse.io/exampleco/jobs/5001001003",
+      "location": { "name": "San Francisco, CA" },
+      "updated_at": "2026-06-03T09:00:00-04:00",
+      "content": "&lt;p&gt;Build APIs. Pay range $170,000 - $210,000.&lt;/p&gt;"
+    }
+  ]
+}

@@ -1,0 +1,98 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "confidence": {
+      "enum": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "type": "string"
+    },
+    "fit_quadrant": {
+      "enum": [
+        "energizing_strength",
+        "energizing_growth",
+        "draining_growth",
+        "draining_strength"
+      ],
+      "type": "string"
+    },
+    "function": {
+      "enum": [
+        "product",
+        "content",
+        "research",
+        "service",
+        "platform",
+        "other"
+      ],
+      "type": "string"
+    },
+    "leads_discipline": {
+      "enum": [
+        "design",
+        "product",
+        "engineering",
+        "content",
+        "other",
+        "unclear"
+      ],
+      "type": "string"
+    },
+    "management_type": {
+      "enum": [
+        "people_leader",
+        "ic",
+        "unclear"
+      ],
+      "type": "string"
+    },
+    "near_miss_flags": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "scoring_notes": {
+      "type": "string"
+    },
+    "tier2": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "n": {
+            "type": "integer"
+          },
+          "q": {
+            "type": "string"
+          },
+          "v": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "n",
+          "v",
+          "q"
+        ],
+        "type": "object"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "tier2",
+    "fit_quadrant",
+    "management_type",
+    "function",
+    "leads_discipline",
+    "confidence",
+    "near_miss_flags",
+    "scoring_notes"
+  ],
+  "type": "object"
+}

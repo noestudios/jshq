@@ -1,0 +1,36 @@
+{
+  "items": [
+    {
+      "SearchId": null,
+      "SiteNumber": "CX",
+      "TotalJobsCount": 3,
+      "requisitionList": [
+        {
+          "Id": "30000001",
+          "Title": "Director, Product Design",
+          "PostedDate": "2026-06-12",
+          "PrimaryLocationCountry": "US",
+          "PrimaryLocation": "Chicago, IL, United States",
+          "WorkplaceTypeCode": "ORA_HYBRID",
+          "WorkplaceType": "Hybrid",
+          "ShortDescriptionStr": ""
+        },
+        {
+          "Id": "30000002",
+          "Title": "Facilities Coordinator - office operations",
+          "PostedDate": "2026-06-12",
+          "PrimaryLocationCountry": "IT",
+          "PrimaryLocation": "Milan, MI, Italy",
+          "WorkplaceTypeCode": null,
+          "WorkplaceType": "",
+          "ShortDescriptionStr": ""
+        }
+      ]
+    }
+  ],
+  "count": 1,
+  "hasMore": true,
+  "limit": 2,
+  "offset": 0,
+  "links": []
+}

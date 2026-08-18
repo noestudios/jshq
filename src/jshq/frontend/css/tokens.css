@@ -1,0 +1,532 @@
+/*
+ * Job Search HQ v3 — design tokens. Single source of truth (CLAUDE.md hard
+ * rule): every color, font, scale, and radius in the app lives here; app.css
+ * only references var(--t-…).
+ *
+ * Two tiers (revamp P1): primitives (the scales below) and semantic aliases
+ * (what a thing is — e.g. --t-radius-control, --t-fit-high-bg). Components
+ * reference the semantic tier where a family exists; replace an alias's
+ * var() with a literal (or another primitive) to diverge that family in one
+ * line. The colour section has worked this way since Phase 4/8.
+ *
+ * Optical-literal rule: scales express rhythm. A component may keep a
+ * measured literal in app.css — a clearance against a specific control
+ * (chevrons, clear/dismiss buttons), a decorative glyph size — with a
+ * comment saying why. Sizing (width/height/min-*) is not spacing and is
+ * not tokenized.
+ *
+ * Theming (P2): :root holds the dark theme (the primary — design decisions
+ * target dark first); html[data-theme="light"] at the bottom overrides every
+ * colour LITERAL in the same section order, so a side-by-side diff catches
+ * gaps. Tokens defined as var() aliases (elev bgs, ring, reminders, banners,
+ * tag pair) re-resolve per theme and need no override — but an alias whose
+ * re-resolved value fails a measurement CAN pick up a light literal
+ * (status-outreach and fit-none-ink did, P5 2026-08-05). The inline boot script in index.html <head> sets data-theme
+ * before stylesheets apply (localStorage "hq_theme"; absent = system
+ * preference); js/lib/theme.js owns runtime switching. Non-colour scales
+ * are theme-invariant.
+ *
+ * Role layer: the core tokens ARE the semantic roles —
+ *   surface  --t-bg          raised  --t-bg-elev (nav/header),
+ *                                    --t-bg-card (cards/panels)
+ *   ink      --t-ink, --t-ink-soft   muted   --t-ink-mute
+ *   border   --t-rule (visible), --t-rule-soft (hairline)
+ *   accent   --t-accent (+hover/soft/mute)    danger  --t-rose (+mute)
+ * Dark is the authored core palette; light is the warm-paper counterpart.
+ * State hues (dots/fit/bands): dark authored at bg ~L20–25% low chroma +
+ * ink ~L75–82%; light inverts to bg ~L92–95% + ink ~L30–35%, anchored on
+ * the olive/gold/slate trio.
+ *
+ * Colour policy (P2, tag-soup option 1): colour encodes STATE or urgency
+ * only — fit, statuses, bands, reminders, errors. Categorical metadata
+ * (remote type, values-fit, source, monograms) shares the one neutral
+ * --t-tag-* treatment; hierarchy for categories lives in type and spacing.
+ */
+
+:root {
+  /* Native form internals (pickers, scrollbars, date/time icons) follow the
+     theme where we can't style them directly (moved here from body in P2 —
+     the light block flips it). */
+  color-scheme: dark;
+
+  /* Surfaces & ink (P6: near-neutral graphite). The warm brown-olive shell was
+     an unsourced inference — the reference it had been justified against did
+     not exist — and all three real references (Superlist, the Spotify concept,
+     Portainer) keep the shell cool or neutral and spend colour narrowly.
+
+     Deliberately DARKER than the shell it replaces: L* 3.2 / 6.6 / 10.0 against
+     the old 8.4 / 11.5 / 15.0. Superlist's sidebar measures ~L*6 and its content
+     panel ~L*8.5, so the shipped app was the light one. The extra room matters
+     because P6 also floats the panes, which needs four surface steps (shell →
+     pane → row hover → row selected) where hairlines previously needed two.
+
+     Chroma landed at ~2.5, not 7-10. The first pass shipped a properly blue
+     slate and the owner read it back as "too much blue, it needs a contrasting
+     color" — correct, because a blue shell under a blue accent leaves nothing
+     to contrast against. Cutting shell chroma ~70% and moving the accent warm
+     (below) restores that: neutral ground, one warm accent, which is the pairing
+     Superlist actually uses.
+
+     C* ~2.5 rather than 0 on purpose — a fully achromatic shell reads flat
+     beside a warm accent, and under ~3 a cast is no longer nameable as a hue.
+     CHROMA IS THE DIAL HERE, not lightness: raise or lower these C* values to
+     re-tint, and leave L* alone (it carries the elevation ramp). */
+  --t-bg: #080c10;
+  --t-bg-elev: #121518;
+  --t-bg-card: #191c1f;
+  --t-ink: #e7eaed;
+  --t-ink-soft: #c0c4c8;
+  --t-ink-mute: #8d9196;
+  /* Wizard hint/tip text: a muted warm tone (ties to the lightbulb marker) that
+     reads as a distinct "tip" without the full accent's pull. */
+  --t-hint-ink: #b19a76;
+  --t-rule: #24282b;
+  --t-rule-soft: #171a1d;
+
+  /* Accent (amber). The retired terracotta failed for a measured reason, not a
+     taste one: it sat on the red-green axis, the axis deuteranopia
+     collapses. #d9663f projects (Viénot) to #949436 — a yellow-olive — rotating
+     hue 45deg to 104deg while KEEPING 49.6 of its 60.3 chroma, so it read loud
+     but unnameable ("a very vibrant red, i'm assuming it's red").
+
+     Azure shipped first and was reverted on the owner's live review: it survives
+     deuteranopia intact, but against a blue shell there was nothing left to
+     contrast with. Amber wins the pairing argument instead — a warm accent on
+     neutral ground is the only colour in the chrome, which is what the
+     references do.
+
+     The gate this accent has that azure did not need: amber and green project
+     to a SIMILAR deuteranope hue, so it must be checked against the state
+     palette, not just the shell. Measured — worst accent-vs-state separation is
+     deut dE 9.87 (dark accent vs the outreach dot), comfortably over the 3.0
+     floor, and every fit band clears 33+. Re-run that check with
+     scripts/simulate_palette.py before moving this: a brighter or greener amber
+     is exactly what would collide with fit-high. */
+  --t-accent: #c8984e;
+  --t-accent-hover: #d8a962;
+  --t-accent-soft: #584323;
+  --t-accent-mute: #332818;
+  /* Ink for text/badges sitting ON --t-accent-soft. The plain --t-accent
+     measured only 3.59:1 there (a lighter amber, still in the family, clears
+     4.5:1). Used by .wizard-required / .wish-rank / .wb-mark-done. */
+  --t-on-accent-soft: #e8c789;
+
+  /* Danger */
+  --t-rose: #cd6272;
+  --t-rose-mute: #3b2729;
+
+  /* Elevation (P1): levels, not bare shadows — on dark surfaces depth reads
+     mostly from surface lightness, so each level pairs a bg with a shadow.
+     Dark leans on the bg side; light (P2) will lean on the shadow side.
+     P1 defines the ramp only — existing uses stay on --t-shadow-lg;
+     reassigning depth per component is a P3 call. */
+  --t-elev-0-bg: var(--t-bg);
+  --t-elev-0-shadow: none;
+  --t-elev-1-bg: var(--t-bg-elev);
+  --t-elev-1-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+  --t-elev-2-bg: var(--t-bg-card);
+  --t-elev-2-shadow: 0 2px 6px rgba(0, 0, 0, 0.3), 0 8px 20px rgba(0, 0, 0, 0.35);
+  --t-elev-3-bg: var(--t-bg-card);
+  --t-elev-3-shadow: var(--t-shadow-lg);
+  --t-shadow-lg: 0 2px 4px rgba(0, 0, 0, 0.3), 0 12px 32px rgba(0, 0, 0, 0.45);
+  --t-overlay: rgba(0, 0, 0, 0.55);
+
+  /* Hover halo on the brand mark. Translucent rather than a hand-mixed
+     midpoint hex: drop-shadow accepts a full colour including alpha, so the
+     glow blooms over whatever sits behind it and still works if the surface
+     colour ever changes. Alpha is the dial — turn these two down for a
+     fainter halo, not the blur. (These were text-shadow until the wordmark
+     became an SVG; same two values, same job, different property.) */
+  --t-glow-ink: rgba(231, 234, 237, 0.5);
+  --t-glow-accent: rgba(200, 152, 78, 0.5);
+
+  /* Type. There is no display face any more. P6 had narrowed --t-font-display to
+     a single consumer, the .brand-mark; the owner then supplied an outlined SVG
+     logotype, which took that last consumer away and retired both the token and
+     the Fraunces request. The "flare up top" they wanted the serif for is now in
+     the artwork instead of the font stack — a swap of medium, not a reversal.
+
+     Everything that used to be display (detail titles, section headers, modal
+     titles, stat numbers, the .display utility) takes --t-font-label. That makes
+     Instrument Sans do both headings and micro-labels, which is the trade the owner
+     accepted when they picked it as the display face. Geist remains the body face
+     and is NOT reopened (settled P5). A new serif needs a new consumer AND a
+     re-added font request — do not resurrect the token on its own. */
+  --t-font-body: "Geist", -apple-system, sans-serif;
+  --t-font-label: "Instrument Sans", -apple-system, sans-serif;
+  --t-font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* Type scale (P1) — 9 steps; collapsed from 19 ad-hoc px sizes (incl.
+     9.5/10.5/11.5/12.5). 12 and 13 are deliberately separate steps — dense
+     data app, both heavily used.
+
+     rem, not px (P4, approved by the owner 2026-08-05): px ignores the reader's
+     browser font-size setting outright. The px comments below are the size at
+     the 16px default, which is what these were authored against — they are the
+     design intent, so keep them accurate if a step ever moves. This is the
+     ONLY place the scale is defined: all 157 consumers are plain `font-size:`
+     with no calc() arithmetic, which is what makes the swap nine lines.
+
+     Caveat: the <=600px iOS Safari focus-zoom guard (app.css, the `16px stops
+     iOS Safari's focus auto-zoom` rule) leans on --t-size-lg being a literal
+     16px. At 1rem it tracks the reader's base instead, so a base below 16px
+     reopens focus-zoom on phones — correct behaviour for someone who asked for
+     smaller text, but it is why that rule references this note. */
+  --t-size-3xs: 0.625rem; /* 10px — micro caps labels */
+  --t-size-2xs: 0.6875rem; /* 11px — tags, nav, meta */
+  --t-size-xs: 0.75rem; /* 12px — dense UI text */
+  --t-size-sm: 0.8125rem; /* 13px — list default */
+  --t-size-md: 0.875rem; /* 14px — body, emphasis */
+  --t-size-lg: 1rem; /* 16px — section titles */
+  --t-size-xl: 1.25rem; /* 20px — modal title, stat numbers */
+  --t-size-2xl: 1.5rem; /* 24px — page h1 */
+  --t-size-3xl: 2rem; /* 32px — detail title */
+
+  /* Line heights */
+  --t-lh-none: 1;
+  --t-lh-tight: 1.2;
+  --t-lh-snug: 1.4;
+  --t-lh-normal: 1.5;
+  --t-lh-relaxed: 1.6;
+
+  /* Weights */
+  --t-weight-normal: 400;
+  --t-weight-medium: 500;
+  --t-weight-semibold: 600;
+
+  /* Tracking (owner review, 2026-08-04: caps at 0.08em, not 0.1) */
+  --t-track-tight: -0.01em;
+  --t-track-normal: 0;
+  --t-track-wide: 0.03em;
+  --t-track-caps: 0.08em; /* uppercase labels pair with --t-font-label */
+
+  /* Spacing scale (P1) — 2px grid to 16, 4px grid above (a legitimate
+     endpoint for a dense data app, not a way station). 416 declarations
+     across 28 ad-hoc values migrated onto these. */
+  --t-space-1: 2px;
+  --t-space-2: 4px;
+  --t-space-3: 6px;
+  --t-space-4: 8px;
+  --t-space-5: 10px;
+  --t-space-6: 12px;
+  --t-space-7: 14px;
+  --t-space-8: 16px;
+  --t-space-9: 20px;
+  --t-space-10: 24px;
+  --t-space-11: 28px;
+  --t-space-12: 32px;
+  --t-space-13: 36px;
+  --t-space-14: 40px;
+  --t-space-15: 64px;
+
+  /* Page gutter — semantic; collapses responsively below (P3). Consumers
+     never carry their own breakpoint variants. */
+  --t-gutter: var(--t-space-13);
+
+  /* Radii (P1: the owner chose 4/8/12) — 3 perceptible steps, was 6 tokens with
+     5 near-identical values (3/5/6/8/10). */
+  --t-radius-sm: 4px;
+  --t-radius-md: 8px;
+  --t-radius-lg: 12px;
+  --t-radius-pill: 999px;
+  --t-radius-round: 50%; /* status dots */
+
+  /* Semantic radii — all resolve to md/lg today; diverge a family in one
+     line (same escape-hatch pattern as the colour aliases below). */
+  --t-radius-control: var(--t-radius-md); /* buttons, inputs, selects, search */
+  --t-radius-card: var(--t-radius-md); /* cards, row-cards, panels-in-flow */
+  --t-radius-surface: var(--t-radius-lg); /* modals, popover panels, toasts */
+  /* micro: radius tracks element SIZE, not importance — inline tag-height
+     elements (≤ ~24px: tags, inline code, small logos, dismiss buttons) and
+     hover-rows nested in a surface panel (concentric: 12 − 6px pad caps the
+     row at ~6, so 8 would overshoot). Anything row/card-scale takes card —
+     a 4px corner on an 86px cell reads square (owner review, P1). */
+  --t-radius-micro: var(--t-radius-sm);
+
+  /* Motion (P1 durations, P3 curve) — one symmetric standard curve because
+     the same token drives enters AND exits (banner-out, count collapse); a
+     decelerate-only curve reads wrong in reverse. Hover feedback sits on the
+     fast tier. .tailor-spin's 1.2s stays a deliberate literal (commented in
+     app.css: slower than ats-spin). --t-rise is the one dial for enter
+     travel (popovers, toasts, banners): motion you feel, not watch. */
+  --t-dur-fast: 150ms; /* hover/press feedback, popover enters */
+  --t-dur-base: 300ms; /* enter/exit, surface fades */
+  --t-dur-slow: 400ms; /* larger movement */
+  /* Attention decays, not movement — a highlight that has to outlast the thing
+     that caused it. At --t-dur-slow the arrival flash read as a blink (owner review,
+     2026-08-05); the eye needs the tail to fall away rather than stop. Nothing
+     that MOVES should use this tier: 750ms of travel is a slide. */
+  --t-dur-linger: 750ms;
+  --t-dur-spin: 900ms;
+  --t-ease: cubic-bezier(0.4, 0, 0.2, 1);
+  --t-ease-linear: linear;
+  /* The one enter-travel dial. Motion needs roughly 100 px/sec and a >1px
+     per-frame step at 60fps to register as movement rather than as a soft
+     edge; below that the opacity fade does all the perceptible work, which is
+     what the owner described at 4px ("the slightest hint of animation… not really
+     sure"). Peak velocity on --t-ease is 2.735 x the average, so:
+
+           rise   @--t-dur-fast (150ms)   @--t-dur-base (300ms)
+           4px      73 px/s  1.13px/f       36 px/s  0.60px/f
+          10px     182 px/s  2.91px/f       91 px/s  1.50px/f   <-- still short
+          14px     255 px/s  4.07px/f      128 px/s  2.10px/f
+
+     10px fixed the fast tier but the owner still read the reveal as too subtle
+     (2026-08-05), and the measurement agrees: the --t-dur-base consumers
+     (toasts, the today-banner) were at 91 px/sec, under the floor, because
+     one dial divided by two durations only ever clears both if it is sized
+     for the SLOW one. 14px is the smallest value where both tiers clear it.
+     Raise this further only with the 300ms column in mind — 16px puts pop-in
+     at 292 px/sec, where a 150ms popover starts to read as a slide. */
+  --t-rise: 14px;
+
+  /* Focus ring — the hard ring for :focus-visible outlines; the halo is the
+     soft outer wash on focused text controls (accent border + halo). Halo is
+     a translucent literal, not an alias — same reasoning as the glow pair:
+     alpha lets it sit on any surface. Appears in BOTH theme blocks. */
+  --t-ring: 2px solid var(--t-accent);
+  --t-ring-halo: rgba(200, 152, 78, 0.22);
+
+  /* Neutral tag (P2, tag-soup option 1): the ONE treatment for categorical
+     metadata — remote type, values-fit, source, monogram tiles. JS
+     still emits per-value modifier classes (remote-x, source-x…) as hooks;
+     CSS no longer styles them. One dial for P3's typographic pass. */
+  --t-tag-bg: var(--t-rule-soft);
+  --t-tag-ink: var(--t-ink-soft);
+
+  /* Status dots. P6 re-derived the whole family onto ONE monotonic L* ladder
+     (closed 34 · prospect 48 · applied 56 · outreach 62 · interviewing 68 ·
+     offer 74 · targeting 80), because at 4x4px lightness is the only channel
+     that survives — hue does nothing, and less than nothing for a deuteranope.
+     Every adjacent pair clears deut dE2000 >= 3 and dL* >= 3.
+
+     --t-status-outreach is now a LITERAL in both themes. It used to alias
+     --t-accent in dark while light carried its own hex (P5), which meant a
+     change of accent silently split the same state into two hues across themes.
+     The azure accent would have done exactly that. */
+  --t-status-prospect: #69737b;
+  --t-status-targeting: #d1c88f;
+  --t-status-outreach: #d57e76;
+  --t-status-applied: #588ea0;
+  --t-status-interviewing: #7eb191;
+  /* P4: lifted from #4caf7d (L* 64.7). Against interviewing it was two greens
+     1.64 L* apart — both project to near-identical warm greys for a
+     deuteranope, and at the 4px dot size the leftover b*-axis difference is
+     not something you can act on. L* 68.0 buys 4.88 from interviewing while
+     holding 3.40 from targeting above it, which is the whole gap available.
+     The light pair already separates (interviewing L* 42.8 vs offer 47.0) and
+     is deliberately left alone. */
+  --t-status-offer: #78c5ab;
+  --t-status-closed: #4c5154;
+
+  /* Job status dots (jobs decay to closed = "no longer listed"). Three of the
+     four reuse the status ladder above rather than running a parallel one —
+     they were already byte-identical to their status counterparts before P6, so
+     this only makes the existing duplication explicit. */
+  --t-jobstatus-active: #7eb191;
+  --t-jobstatus-applied: #588ea0;
+  /* Its own grey, still: mapping this onto status-closed would have made the
+     two identical, and tokens.css has kept them apart deliberately since
+     Phase 8. L* 42 against closed's 34 — dL* 7.9, deut dE 6.9. */
+  --t-jobstatus-dismissed: #5e6469;
+  --t-jobstatus-closed: #d1c88f;
+
+  /* (jobstatus-dismissed intentionally keeps its own grey — no longer aliased to
+     status-closed, which was nudged cooler above.) */
+  /* "No longer listed" band */
+  --t-band-closed-bg: #372a19;
+  --t-band-closed-ink: #bab4ae;
+
+  /* Fit-score chips (Phase 4; P2 de-aliased them from the retired categorical hues —
+     fit owns its green/amber/neutral now. tier1-pass, activity-type-applied
+     and fit-elevated borrow fit-high; the stale-banner bars no longer do —
+     see --t-banner-ok-* below for why.)
+
+     P4 LIGHTNESS LADDER. The fills used to separate by hue alone and encoded
+     nothing for a deuteranope: shipped dark high-vs-mid was dE2000 10.27
+     normal but 2.07 simulated, on ΔL* 0.40. All four bands now sit on a ~5 L*
+     ladder anchored on --t-rule-soft, so the fill carries the band on the one
+     axis that survives. The ink rides the same ladder (each solved to ~6.8:1
+     on its own fill), so ink and fill reinforce instead of fighting.
+
+     DIRECTION is semantic, not absolute: contrast against the page rises with
+     the band, so the ladder ASCENDS in dark and DESCENDS in light. Doing it
+     the other way would put light's high band at L*92 on a white card, which
+     is where it was and why it vanished. Verified after the change: all six
+     pairs clear both gates in both themes (worst dark 3.52, worst light 3.71
+     simulated dE; worst ΔL* 4.46). Re-simulate if any value moves — near-white
+     pairs need more travel for the same dE, since CIEDE2000's SL divides ΔL*
+     by ~1.58 up at L*89 but only ~1.45 down at L*20.
+
+     P6 RE-DERIVED THE LADDER AS ONE OBJECT. It had to be: --t-fit-none-bg IS
+     --t-rule-soft, so moving the shell to cool slate moved the bottom rung out
+     from under the other three. The step is no longer the P4 5.0 either — a
+     darker shell drops the anchor to L* 9.1, and a fixed 5.0 step would have
+     landed the top band at L* 24 instead of 32.6, dark enough that hue stops
+     being readable at all. The step is solved instead to hold the HIGH band at
+     L* 32.5 regardless of how dark the shell goes: 7.81 here.
+
+     Hues moved cool too (teal high, slate-blue mid) — amber on a cool ground
+     was the "pills feel off" the owner reported. Every adjacent pair re-verified
+     with scripts/simulate_palette.py: worst deut dE 5.33, worst dL* 4.59, and
+     each ink solved to ~6.8:1 on its own fill. */
+  --t-fit-high-bg: #2e5445; /* L* 32.5 */
+  --t-fit-high-ink: #d3ebe0;
+  --t-fit-mid-bg: #10404a; /* L* 24.7 */
+  --t-fit-mid-ink: #c4c9ca;
+  --t-fit-low-bg: #222b32; /* L* 16.9 */
+  --t-fit-low-ink: #acb3b9;
+  --t-fit-none-bg: var(--t-rule-soft); /* L* 9.1 — the ladder's anchor */
+  /* A literal in both themes since P6. Aliased to --t-ink-mute it reached only
+     5.53:1 on the new anchor, off the ~6.8 the other three bands are solved to;
+     light already carried its own literal for the same reason (P5). */
+  --t-fit-none-ink: #9fa2a5;
+
+  /* Refresh banners ("Refreshing…" / "all boards OK") — the calm green they
+     have always been. These held fit-high until P4; the ladder above turned
+     fit-high into a RUNG of a scale, tuned for a 26px chip, and a full-width
+     band has no business riding it (dark would have jumped L* 22→33, light
+     92→76 across the top of Today). Same hexes fit-high used to carry, so the
+     banner is pixel-identical — only its name changed. */
+  --t-banner-ok-bg: #1e3324;
+  --t-banner-ok-ink: #afbbb1;
+
+  /* "Close but check" near-miss band (civic blue; P2 de-aliased) */
+  --t-band-nearmiss-bg: #113446;
+  --t-band-nearmiss-ink: #b7bbbe;
+
+  /* Reminders + calendar (Phase 5; aliases — emphasis only for action/change) */
+  --t-rem-pending: var(--t-accent);
+  --t-rem-overdue: var(--t-rose);
+  --t-rem-done: var(--t-ink-mute);
+  --t-cal-today: var(--t-accent);
+
+  /* Hardening (Phase 7; aliases) — error banners + per-company ATS health */
+  --t-banner-error-bg: var(--t-rose-mute);
+  --t-banner-error-ink: var(--t-rose);
+  --t-ats-error-bg: var(--t-rose-mute);
+  --t-ats-error-ink: var(--t-rose);
+  --t-ats-ok-ink: var(--t-ink-mute);
+
+}
+
+/* ≤900px: the page gutter collapses with the mobile layout switch. 900px
+   matches app.css's layout breakpoint — change them together. Every
+   var(--t-gutter) consumer follows automatically (P3: this retired the
+   hand-written per-selector 20px variants; Settings/Help/save bar/demo
+   banner, which those variants had missed, now collapse too — intended). */
+@media (max-width: 900px) {
+  :root {
+    --t-gutter: var(--t-space-9);
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * Light theme. Every colour LITERAL from :root is overridden here in the
+ * same section order (aliases re-resolve on their own — see header). Core
+ * palette is the warm-paper counterpart; state hues follow the light
+ * derivation rule (bg ~L92–95%, ink ~L30–35%), anchored on the
+ * olive #5b6b3a / gold #b89030 / slate #4b5b6b trio.
+ * ------------------------------------------------------------------------ */
+html[data-theme="light"] {
+  color-scheme: light;
+
+  /* Surfaces & ink (P6: near-neutral paper). The page drops to L* 92.5 — the
+     shipped cream sat at 94.9, only 2.4 L* under --t-bg-elev, which was fine
+     while a 1px border did the separating. P6 removes those borders and makes
+     surface value the separation, so the shell has to clear the 3 L* floor
+     against the panes that now float on it: 92.5 -> 96.7 is 4.26.
+     Chroma matches the dark block's ~2.5 — see the note there for why it is not
+     zero, and for which dial to turn to re-tint. */
+  --t-bg: #e6eaed;
+  --t-bg-elev: #f3f6f9;
+  --t-bg-card: #ffffff;
+  --t-ink: #141618;
+  --t-ink-soft: #3e4144;
+  /* A11Y-03: darkened from #73787c (3.69:1 on --t-bg, and only 3.01:1 as muted
+     text on the darkest selected-card fill --t-rule #cfd5da) to clear the 4.5:1
+     body floor on EVERY muted surface. #565a5e (L* ~38) measures 5.70:1 on
+     --t-bg and 4.66:1 on the selected-card fill — the worst case — while still
+     reading a clear tier below --t-ink-soft. */
+  --t-ink-mute: #565a5e;
+  /* Wizard hint/tip text (light): a muted warm brown — distinct from body ink,
+     still subdued. */
+  --t-hint-ink: #6d5a2f;
+  --t-rule: #cfd5da;
+  --t-rule-soft: #e0e5e9;
+
+  /* Accent (amber deepens hard for contrast on paper — L* 43, solved so link
+     ink clears 4.5:1 on --t-bg; L* 45 measured 4.45 and missed) */
+  --t-accent: #8e5b00;
+  --t-accent-hover: #754900;
+  --t-accent-soft: #e2cbb3;
+  --t-accent-mute: #f4e6d8;
+  /* Ink on --t-accent-soft (see dark block). Plain --t-accent measured 3.68:1
+     here; a darker amber clears 4.5:1. */
+  --t-on-accent-soft: #5a3a00;
+
+  /* Danger */
+  --t-rose: #ad4053;
+  --t-rose-mute: #ffe9ea;
+
+  /* Elevation — light leans on the shadow side (the elev bgs re-resolve to
+     the light surfaces via their aliases). Warm-dark shadow ink, low alpha. */
+  --t-elev-1-shadow: 0 1px 2px rgba(43, 36, 28, 0.12);
+  --t-elev-2-shadow: 0 2px 6px rgba(43, 36, 28, 0.1), 0 8px 20px rgba(43, 36, 28, 0.12);
+  --t-shadow-lg: 0 2px 4px rgba(26, 22, 18, 0.04), 0 12px 32px rgba(26, 22, 18, 0.1);
+  --t-overlay: rgba(43, 36, 28, 0.4); /* scrims stay dark on light */
+
+  /* Hover halo */
+  --t-glow-ink: rgba(20, 22, 24, 0.35);
+  --t-glow-accent: rgba(142, 91, 0, 0.4);
+
+  /* Focus ring (halo only — --t-ring is an alias and re-resolves) */
+  --t-ring-halo: rgba(142, 91, 0, 0.22);
+
+  /* Status dots. Outreach was aliased to accent until P5 (2026-08-05): the
+     re-resolved light accent #b14424 (L* 43.7) sat 0.84 L* from interviewing
+     #5b6b3a — hue-only separation on exactly the axis deuteranopia collapses.
+     The ladder (applied 37.9 · interviewing 42.8 · offer 47.0 · prospect 51.0
+     · targeting 62.0 · closed 66.9) leaves one open window, L* ~54-59;
+     #d06a42 (L* 56.2, still plainly terracotta — near dark's accent) measures
+     dL* 13.4 / deut dE 18.2 vs interviewing and >=5.2 L* from every
+     neighbour. Dark keeps the alias. */
+  --t-status-prospect: #737d85;
+  --t-status-targeting: #a39a55;
+  --t-status-outreach: #cf6c65;
+  --t-status-applied: #155c6f;
+  --t-status-interviewing: #3d6d50;
+  --t-status-offer: #2f7c66;
+  --t-status-closed: #a4a9ad;
+
+  /* Job status dots */
+  --t-jobstatus-active: #3d6d50;
+  --t-jobstatus-applied: #155c6f;
+  --t-jobstatus-dismissed: #8b9197; /* own grey — see the :root note */
+  --t-jobstatus-closed: #a39a55;
+
+  /* "No longer listed" band */
+  --t-band-closed-bg: #ffe0be;
+  --t-band-closed-ink: #564a3d;
+
+  /* Fit-score chips — the same P4 ladder, descending (see the :root note).
+     none's BG stays --t-rule-soft at L* 91.1, so the anchor is shared; its
+     INK gets a light literal since P5 — the aliased --t-ink-mute #837868
+     measured 3.45:1 on that bg, under the 4.5:1 text floor. #6b6154 (same
+     warm-grey family, L* 41.7) measures 4.84:1. Dark ink stays aliased. */
+  --t-fit-high-bg: #9dc6b4; /* L* 76.5 */
+  --t-fit-high-ink: #28352f;
+  --t-fit-mid-bg: #9fd2df; /* L* 81.2 */
+  --t-fit-mid-ink: #373c3d;
+  --t-fit-low-bg: #cdd8e3; /* L* 85.9 */
+  --t-fit-low-ink: #3e4449;
+  --t-fit-none-ink: #494c4e;
+
+  /* Refresh banners (see :root) */
+  --t-banner-ok-bg: #ceefd5;
+  --t-banner-ok-ink: #4b4e4b;
+
+  /* Near-miss band */
+  --t-band-nearmiss-bg: #c6e7ff;
+  --t-band-nearmiss-ink: #484b4d;
+}

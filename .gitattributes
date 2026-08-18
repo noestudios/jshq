@@ -1,0 +1,11 @@
+# Checkouts must be byte-identical on every OS: tests compare read_bytes
+# against tracked files (test_paths_seed) and a golden prompt fixture, and
+# windows-latest CI checks out with autocrlf by default.
+* text=auto eol=lf
+
+# text=auto already leaves binaries alone (NUL detection); these mark intent.
+*.woff2 binary
+*.ttf binary
+*.ico binary
+*.png binary
+*.sqlite binary

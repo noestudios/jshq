@@ -1,0 +1,19 @@
+# Stay out, everyone.
+#
+# This app binds 127.0.0.1, so in normal use nothing can reach it to crawl it.
+# The file exists for the case where a copy of the frontend does get served
+# somewhere reachable: the board is full of the user's real job search, and a
+# demo build is full of fictional postings at invented companies that would
+# read as real listings if indexed.
+#
+# The social-crawler allowlist that used to sit here (LinkedInBot, Twitterbot
+# and friends) existed only to let those bots read the Open Graph tags for one
+# hosted demo's share card. Those tags are gone, so the exception has nothing
+# left to admit.
+#
+# <meta name="robots"> in index.html says the same thing. Neither binds a
+# crawler that ignores robots.txt; an X-Robots-Tag header at the server is the
+# only one that does, and it is the deployment's job, not the app's.
+
+User-agent: *
+Disallow: /

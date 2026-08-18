@@ -1,0 +1,33 @@
+{
+  "totalCount": 4,
+  "count": 4,
+  "jobs": [
+    {
+      "data": {
+        "req_id": "30003",
+        "slug": "30003",
+        "title": "Senior UX Researcher",
+        "full_location": "London, United Kingdom",
+        "location_type": "ANY",
+        "tags2": null,
+        "tags6": null,
+        "tags8": null,
+        "meta_data": {"canonical_url": "https://join.acmeco.com/jobs/30003?lang=en-us"},
+        "description": "<p>Research our products end to end.</p>"
+      }
+    },
+    {
+      "data": {
+        "req_id": "30004",
+        "slug": "30004",
+        "title": "UX Design Intern",
+        "full_location": "Chicago, IL, United States",
+        "location_type": "LAT_LNG",
+        "tags2": ["No"],
+        "tags8": ["$18.40 - $28.00 Hourly"],
+        "meta_data": {"canonical_url": "https://careers.exampleco.com/jobs/30004?lang=en-us"},
+        "description": "<p>Support the design team.</p>"
+      }
+    }
+  ]
+}

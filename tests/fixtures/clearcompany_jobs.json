@@ -1,0 +1,94 @@
+{
+ "results": [
+  {
+   "id": "a1b2c3d4-e5f6-0708-090a-000000000001",
+   "positionTitle": "Senior UX Designer / Researcher (Remote)",
+   "description": "<p>Senior Designer  \n\n  This is a remote position.  \n\n Exampleco is a technology company that builds scheduling and records software for mid-size service businesses. Using modern, agil</p><p>The range of starting pay for this role is $110,000 - $130,000.</p>",
+   "openDate": "2026-07-10T00:00:00",
+   "postedDate": "2026-07-10T00:00:00",
+   "departmentId": "11111111-2222-3333-4444-555555555555",
+   "departmentName": "Design",
+   "officeId": "BBBBBBBB-CCCC-DDDD-EEEE-FFFFFFFF0001",
+   "officeName": "Remote",
+   "location": "Remote (US)",
+   "locations": [
+    {
+     "city": null,
+     "subdivision": "",
+     "subdivisionFullName": "",
+     "country": "US",
+     "postalCode": null,
+     "isRemote": true,
+     "isNationwide": true,
+     "isStatewide": false,
+     "latitude": null,
+     "longitude": null
+    }
+   ],
+   "brandName": "Exampleco",
+   "applyLink": "https://exampleco.clearcompany.com/careers/jobs/a1b2c3d4-e5f6-0708-090a-000000000001/apply",
+   "canSelfSchedule": false
+  },
+  {
+   "id": "a1b2c3d4-e5f6-0708-090a-000000000002",
+   "positionTitle": "Senior Cloud Network Engineer",
+   "description": "<p>Senior Cloud Network Engineer   \n\n  This is a remote position.  \n\n Exampleco is a technology company that builds scheduling and records software for mid-size service businesses. U</p><p></p>",
+   "openDate": "2026-07-08T00:00:00",
+   "postedDate": "2026-07-08T00:00:00",
+   "departmentId": "66666666-7777-8888-9999-AAAAAAAAAAAA",
+   "departmentName": "Platform",
+   "officeId": "BBBBBBBB-CCCC-DDDD-EEEE-FFFFFFFF0002",
+   "officeName": "Remote Central",
+   "location": "Remote (US)",
+   "locations": [
+    {
+     "city": null,
+     "subdivision": "",
+     "subdivisionFullName": "",
+     "country": "US",
+     "postalCode": null,
+     "isRemote": true,
+     "isNationwide": true,
+     "isStatewide": false,
+     "latitude": null,
+     "longitude": null
+    }
+   ],
+   "brandName": "Exampleco",
+   "applyLink": "https://exampleco.clearcompany.com/careers/jobs/a1b2c3d4-e5f6-0708-090a-000000000002/apply",
+   "canSelfSchedule": false
+  },
+  {
+   "id": "a1b2c3d4-e5f6-0708-090a-000000000003",
+   "positionTitle": "Senior UX Designer (Records Modernization)",
+   "description": "<p>Senior UX Designer  \n\n  This is a remote position.  \n\n Exampleco is a technology company that builds scheduling and records software for mid-size service businesses. Using modern,</p><p>The range of starting pay for this role is $100,000 - $120,000.</p>",
+   "openDate": "2026-06-11T00:00:00",
+   "postedDate": "2026-06-11T00:00:00",
+   "departmentId": "66666666-7777-8888-9999-AAAAAAAAAAAA",
+   "departmentName": "Platform",
+   "officeId": "BBBBBBBB-CCCC-DDDD-EEEE-FFFFFFFF0001",
+   "officeName": "Remote",
+   "location": "Remote (US)",
+   "locations": [
+    {
+     "city": null,
+     "subdivision": "",
+     "subdivisionFullName": "",
+     "country": "US",
+     "postalCode": null,
+     "isRemote": true,
+     "isNationwide": true,
+     "isStatewide": false,
+     "latitude": null,
+     "longitude": null
+    }
+   ],
+   "brandName": "Exampleco",
+   "applyLink": "https://exampleco.clearcompany.com/careers/jobs/a1b2c3d4-e5f6-0708-090a-000000000003/apply",
+   "canSelfSchedule": false
+  }
+ ],
+ "currentPageIndex": 0,
+ "totalCount": 3,
+ "currentPageCount": 3
+}

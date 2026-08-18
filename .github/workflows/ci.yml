@@ -1,0 +1,59 @@
+# Tests on ubuntu and windows, plus a packaging job that proves the wheel
+# ships its data. macOS is deliberately not in the matrix: its runners bill
+# at 10x, and the macOS-only paths (osascript popups, the isMac UI branch)
+# are no-op guarded everywhere else.
+# No secrets, ever: the suite is keyless by invariant, and nothing here
+# may ever run scripts/calibrate_scoring.py (a paid live-API run).
+# Actions are pinned by commit SHA — mutable tags are supply-chain surface
+# this zero-phone-home project doesn't want.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, python: "3.12" }
+          - { os: windows-latest, python: "3.12" }
+          # Unpinned deps + next Python: this row is the canary.
+          - { os: ubuntu-latest, python: "3.13" }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: ${{ matrix.python }}
+      # pip >= 25.1 is required for --group (PEP 735 dependency groups).
+      - run: python -m pip install -U pip
+      - run: python -m pip install -e . --group dev
+      - run: python -m pytest
+
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -U pip build
+      - run: python -m build
+      - run: python scripts/check_wheel.py dist/*.whl
+      - run: python -m pip install dist/*.whl
+      # argparse exits before _load_env, so no data dir is created.
+      - run: jshq --help

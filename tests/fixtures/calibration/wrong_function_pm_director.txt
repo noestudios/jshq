@@ -1,0 +1,68 @@
+ABOUT US
+
+Gablewright is a venture-backed startup rethinking how new homes get from a floor plan to a finished street. Our design studio, configurator, and construction-document tools are used by residential builders across North America. We have raised $62M from firms and strategic investors across construction, building products, and real estate.
+
+
+
+We're looking for a Director of Product, Home Design Platform to own the platform that carries a home from first sketch to construction documents. You will set vision, strategy, and roadmap for the core drafting and configuration experience, partnering with Engineering, Design, and go-to-market to make a complex domain feel simple.
+
+
+
+
+WHAT YOU'LL DO
+
+You will inherit a team of four senior product managers and be responsible for their growth and for the platform's direction. Expect to:
+
+ - Build and develop a strong team of product managers - coaching, career growth, and a high bar for product thinking and execution.
+
+ - Own the vision, strategy, and roadmap for the drafting-to-construction-documents flow at the center of the product.
+
+ - Turn the core building model into a platform: expose drafting and configuration workflows through APIs so builders and partners can integrate us into their own systems.
+
+ - Define how AI shows up across the platform - embedded assistance in core workflows and shared capabilities other teams build on.
+
+ - Own platform metrics and business outcomes, with clear accountability for adoption and quality over time.
+
+ - Partner closely with our Design leadership to turn workflow complexity into intuitive, cohesive product experiences.
+
+ - Create clarity in ambiguous territory by connecting builder needs, technical architecture, and company strategy into one direction.
+
+ - Stay with the product: we ship, learn, and refine release over release.
+
+
+ABOUT YOU
+
+You are a systems-minded product leader with strong design judgment: you care that what ships is not just scalable but intuitive and coherent, and you know how to hold both.
+
+You have:
+
+ - 8+ years of product management experience, including leading complex platform areas
+
+ - 4+ years managing product managers: hiring, coaching, and developing them
+
+ - A record of shipping platform or workflow products with real customer and business impact
+
+ - Strong design judgment and fluency working with design and research partners
+
+ - A systems-thinking mindset connecting technical architecture, customer workflows, and business goals
+
+ - Excellent communication at both the strategic and the tactical level
+
+ - Comfort turning broad problem spaces into focused roadmaps and execution plans
+
+A plus if you bring:
+
+ - Experience in architecture, construction tech, design tools, or homebuilding software
+
+ - Familiarity with CAD- or BIM-style systems, configurators, or construction-document generation
+
+ - Experience with APIs, platform strategy, or AI-enabled product experiences
+
+
+WORKING AT GABLEWRIGHT
+
+Gablewright has been remote-first since 2019. We keep the pace sustainable on purpose: flexible hours, an async-first culture, and a written work-life policy we actually follow. Compensation is competitive with meaningful equity.
+
+We provide comprehensive medical, dental, and vision coverage, flexible PTO, parental leave, disability coverage, and a 401(k). We also provide a stipend for your home office.
+
+Please note: recruiting scams impersonating Gablewright have been reported. Genuine messages from our hiring team come only from an @gablewright.example email address.

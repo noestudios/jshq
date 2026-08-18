@@ -1,0 +1,66 @@
+{
+  "apiVersion": "2024-01-01",
+  "jobs": [
+    {
+      "id": "11111111-2521-47d5-a97e-c51bbd2537ee",
+      "title": "Product Designer",
+      "jobUrl": "https://jobs.ashbyhq.com/exampleco/11111111-2521-47d5-a97e-c51bbd2537ee",
+      "applyUrl": "https://jobs.ashbyhq.com/exampleco/11111111-2521-47d5-a97e-c51bbd2537ee/application",
+      "location": "San Francisco",
+      "secondaryLocations": [],
+      "isRemote": false,
+      "isListed": true,
+      "workplaceType": "Hybrid",
+      "employmentType": "FullTime",
+      "publishedAt": "2026-05-20T00:00:00.000Z",
+      "descriptionPlain": "Design core product surfaces end to end.",
+      "descriptionHtml": "<p>Design core product surfaces end to end.</p>",
+      "compensation": {
+        "compensationTierSummary": "$150K – $190K • Offers Equity",
+        "scrapeableCompensationSalarySummary": "$150K - $190K",
+        "compensationTiers": [
+          {
+            "id": "63d7058a-fe76-47ef-91c9-f4612dde5f9c",
+            "title": null,
+            "additionalInformation": null,
+            "tierSummary": "$150K – $190K • Offers Equity",
+            "components": []
+          }
+        ],
+        "summaryComponents": []
+      }
+    },
+    {
+      "id": "22222222-2521-47d5-a97e-c51bbd2537ee",
+      "title": "Head of Design",
+      "jobUrl": "https://jobs.ashbyhq.com/exampleco/22222222-2521-47d5-a97e-c51bbd2537ee",
+      "applyUrl": "https://jobs.ashbyhq.com/exampleco/22222222-2521-47d5-a97e-c51bbd2537ee/application",
+      "location": "United States",
+      "secondaryLocations": [],
+      "isRemote": true,
+      "isListed": true,
+      "workplaceType": "Remote",
+      "employmentType": "FullTime",
+      "publishedAt": "2026-05-22T00:00:00.000Z",
+      "descriptionPlain": "Build and lead the design team.",
+      "descriptionHtml": "<p>Build and lead the design team.</p>",
+      "compensation": null
+    },
+    {
+      "id": "33333333-2521-47d5-a97e-c51bbd2537ee",
+      "title": "Account Executive",
+      "jobUrl": "https://jobs.ashbyhq.com/exampleco/33333333-2521-47d5-a97e-c51bbd2537ee",
+      "applyUrl": "https://jobs.ashbyhq.com/exampleco/33333333-2521-47d5-a97e-c51bbd2537ee/application",
+      "location": "New York",
+      "secondaryLocations": [],
+      "isRemote": false,
+      "isListed": true,
+      "workplaceType": "OnSite",
+      "employmentType": "FullTime",
+      "publishedAt": "2026-05-23T00:00:00.000Z",
+      "descriptionPlain": "Sell the product.",
+      "descriptionHtml": "<p>Sell the product.</p>",
+      "compensation": null
+    }
+  ]
+}

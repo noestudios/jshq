@@ -1,0 +1,20 @@
+[
+  {
+    "id": "abc123",
+    "friendly_id": "abc123-director-of-ux-design",
+    "name": "Director of UX Design",
+    "location": {"name": "Remote, US", "is_remote": true, "country": {"id": "US", "name": "United States"}},
+    "salary": "",
+    "type": {"id": "fullTime", "name": "Full-Time"},
+    "url": "https://exampleco.breezy.hr/p/abc123-director-of-ux-design"
+  },
+  {
+    "id": "def456",
+    "friendly_id": "def456-senior-backend-engineer",
+    "name": "Senior Backend Engineer",
+    "location": {"name": "Boise, ID", "is_remote": false},
+    "salary": "",
+    "type": {"id": "fullTime", "name": "Full-Time"},
+    "url": "https://exampleco.breezy.hr/p/def456-senior-backend-engineer"
+  }
+]

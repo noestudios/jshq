@@ -1,0 +1,37 @@
+{
+  "id": "6000000000000001",
+  "name": "Design Lead, Brand",
+  "refNumber": "REF0001A",
+  "active": true,
+  "releasedDate": "2026-06-01T15:41:57.577Z",
+  "location": {
+    "city": "Sydney",
+    "region": "NSW",
+    "country": "au",
+    "remote": false,
+    "hybrid": true,
+    "fullLocation": "Sydney, NSW, Australia"
+  },
+  "postingUrl": "https://jobs.smartrecruiters.com/exampleco/6000000000000001-design-lead-brand",
+  "applyUrl": "https://jobs.smartrecruiters.com/exampleco/6000000000000001-design-lead-brand?oga=true",
+  "jobAd": {
+    "sections": {
+      "companyDescription": {
+        "title": "Company Description",
+        "text": "<p>ExampleCo makes example things.</p>"
+      },
+      "jobDescription": {
+        "title": "Job Description",
+        "text": "<p>Lead brand design across campaigns. Salary $140,000 to $170,000.</p>"
+      },
+      "qualifications": {
+        "title": "Qualifications",
+        "text": "<ul><li>8+ years in brand design</li></ul>"
+      },
+      "additionalInformation": {
+        "title": "Additional Information",
+        "text": "<p>Hybrid, 2 days in office.</p>"
+      }
+    }
+  }
+}

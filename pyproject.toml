@@ -1,0 +1,42 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "jshq"
+version = "0.1.0"
+description = "Local-first, zero-tracking job-search dashboard"
+readme = "README.md"
+authors = [{ name = "Chris Hays" }]
+requires-python = ">=3.12"
+license = "AGPL-3.0-only"
+license-files = ["LICENSE"]
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "python-dotenv",
+    "httpx",
+    "anthropic",
+    "icalendar",
+]
+
+[project.scripts]
+jshq = "jshq.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/noestudios/jshq"
+Repository = "https://github.com/noestudios/jshq"
+Issues = "https://github.com/noestudios/jshq/issues"
+
+[dependency-groups]
+dev = ["pytest"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/jshq"]
+# hatchling ships every file under the package dir: schema.sql,
+# scoring/us_places.tsv, resume/{template.html,*.css,fonts/*},
+# and (from Phase 1 C3/C5) defaults/ and frontend/.
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

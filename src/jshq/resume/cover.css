@@ -1,0 +1,84 @@
+/* Cover letter print styles — standalone on purpose: importing
+   resume.css would leak its section/bullet rules. Font faces, page margins,
+   and base type copied from resume.css so the letterhead matches the resume
+   exactly. Agents edit letter content, never this file. */
+
+@font-face {
+  font-family: "Carlito";
+  src: url("fonts/Carlito-Regular.ttf");
+  font-weight: 400;
+  font-style: normal;
+}
+@font-face {
+  font-family: "Carlito";
+  src: url("fonts/Carlito-Bold.ttf");
+  font-weight: 700;
+  font-style: normal;
+}
+@font-face {
+  font-family: "Carlito";
+  src: url("fonts/Carlito-Italic.ttf");
+  font-weight: 400;
+  font-style: italic;
+}
+@font-face {
+  font-family: "Carlito";
+  src: url("fonts/Carlito-BoldItalic.ttf");
+  font-weight: 700;
+  font-style: italic;
+}
+
+@page {
+  size: letter;
+  margin: 36pt 54pt; /* same as the resume */
+}
+
+body {
+  margin: 0;
+  font-family: "Carlito", Calibri, sans-serif;
+  font-size: 10pt;
+  color: #222222;
+  line-height: normal;
+  -webkit-print-color-adjust: exact;
+}
+
+a {
+  color: #1155cc;
+}
+
+/* ---- letterhead (matches resume.css) ---- */
+
+.name {
+  margin: 0;
+  font-size: 24pt;
+  font-weight: 700;
+}
+
+.title {
+  margin: 4pt 0 4pt;
+  font-size: 12pt;
+  color: #555555;
+}
+
+.contact {
+  margin: 0;
+  color: #555555;
+}
+
+header {
+  padding-bottom: 2pt;
+  border-bottom: 0.75pt solid #888888;
+}
+
+/* ---- letter ---- */
+
+.letter-date {
+  margin: 14pt 0 0;
+  color: #555555;
+}
+
+.letter p {
+  margin: 11pt 0 0;
+  line-height: 1.42; /* the resume's paragraph leading */
+  text-wrap: pretty;
+}

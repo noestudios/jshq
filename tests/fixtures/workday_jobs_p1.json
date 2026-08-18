@@ -1,0 +1,21 @@
+{
+  "total": 3,
+  "jobPostings": [
+    {
+      "title": "Senior Design Program Manager",
+      "externalPath": "/job/Boston-MA/Senior-Design-Program-Manager_R100",
+      "locationsText": "Boston, MA",
+      "postedOn": "Posted 3 Days Ago",
+      "timeType": "Full time",
+      "bulletFields": ["R100"]
+    },
+    {
+      "title": "Staff Software Engineer",
+      "externalPath": "/job/Boston-MA/Staff-Software-Engineer_R101",
+      "locationsText": "Boston, MA",
+      "postedOn": "Posted 5 Days Ago",
+      "timeType": "Full time",
+      "bulletFields": ["R101"]
+    }
+  ]
+}
