@@ -29,6 +29,27 @@ def test_greenhouse_job_boards_domain():
     ]
 
 
+def test_greenhouse_embedded_board_token_var():
+    # A branded careers page whose only greenhouse signal is a JS/JSON var
+    # (Next.js public-env style) — the board URL redirects to this same page.
+    html = '<script>window.__ENV={"PUBLIC_GREENHOUSE_BOARD":"acmeco","X":1}</script>'
+    assert p.extract_ats_candidates(html) == [(p.GREENHOUSE, "acmeco")]
+
+
+def test_greenhouse_board_token_var_camel_and_assign():
+    for html in (
+        'greenhouseBoard: "acmeco"',
+        'const GREENHOUSE_BOARD_TOKEN = "acmeco";',
+        '"greenhouse_board":"acmeco"',
+    ):
+        assert p.extract_ats_candidates(html) == [(p.GREENHOUSE, "acmeco")], html
+
+
+def test_greenhouse_board_prose_does_not_match():
+    # "greenhouse board" with a space is not the var form and must not match.
+    assert p.extract_ats_candidates("We use a greenhouse board: it is great") == []
+
+
 def test_lever():
     html = '<a href="https://jobs.lever.co/exampleco/12345-abc">Open roles</a>'
     assert p.extract_ats_candidates(html) == [(p.LEVER, "exampleco")]
@@ -158,6 +179,25 @@ def test_candidate_slugs_noise_words():
 
 def test_candidate_slugs_unicode():
     assert p.candidate_slugs("Ørbital")[0] == "orbital"
+
+
+def test_host_slug_candidates_strips_www_and_tld():
+    assert p.host_slug_candidates("https://www.exampleco.com/careers") == ["exampleco"]
+    assert p.host_slug_candidates("https://exampleco.com") == ["exampleco"]
+    assert p.host_slug_candidates("exampleco.com/careers") == ["exampleco"]  # scheme-less
+
+
+def test_host_slug_candidates_drops_careers_subdomain():
+    # careers.acmeco.io -> the registrable label "acmeco", not "careers".
+    assert p.host_slug_candidates("https://careers.acmeco.io") == ["acmeco"]
+    assert p.host_slug_candidates("https://jobs.example.io/roles") == ["example"]
+
+
+def test_host_slug_candidates_hyphenated_and_empty():
+    slugs = p.host_slug_candidates("https://www.acme-corp.com")
+    assert "acmecorp" in slugs and "acme-corp" in slugs
+    assert p.host_slug_candidates("") == []
+    assert p.host_slug_candidates(None) == []
 
 
 def test_public_board_url():

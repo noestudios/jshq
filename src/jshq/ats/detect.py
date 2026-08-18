@@ -5,8 +5,8 @@ Standalone run:  python -m jshq.ats.detect [--dry-run] [--company-id N]
 Per company: fetch the careers/website URL (robots.txt-respecting, honest
 User-Agent), scan the final URL + HTML for ATS signatures, then verify each
 candidate against the ATS's public API. If the page yields nothing, probe
-name-derived slugs against the slug-addressable APIs (never Workday — its
-tenant/site must come from page evidence). Confirmed results are written to
+host- and name-derived slugs against the slug-addressable APIs (never Workday —
+its tenant/site must come from page evidence). Confirmed results are written to
 companies.ats_type/ats_slug (+ careers_url backfill); full results land in
 data/ats_detect_results.json for inspection.
 
@@ -231,7 +231,17 @@ async def detect_company(client: httpx.AsyncClient, company: sqlite3.Row) -> dic
     # clear a higher bar: a non-empty board (SmartRecruiters returns 200 with
     # totalFound=0 for slugs that don't even exist), and — where the ATS
     # exposes one — a board display name to eyeball against the company.
-    for slug in p.candidate_slugs(company["name"])[:MAX_PROBE_SLUGS]:
+    # Host-derived slugs first: a user-supplied careers URL is stronger brand
+    # evidence than the tracked name, and it is the only lead when the board is
+    # client-rendered (no in-page signature) yet the company is tracked under a
+    # name that does not match the board slug. Name-derived slugs follow.
+    probe_slugs: list[str] = []
+    for slug in p.host_slug_candidates(
+        company["careers_url"] or company["website"]
+    ) + p.candidate_slugs(company["name"]):
+        if slug not in probe_slugs:
+            probe_slugs.append(slug)
+    for slug in probe_slugs[:MAX_PROBE_SLUGS]:
         for ats_type in (p.GREENHOUSE, p.LEVER, p.ASHBY, p.SMARTRECRUITERS):
             evidence = await verify(client, ats_type, slug)
             if not evidence:

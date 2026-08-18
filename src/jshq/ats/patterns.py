@@ -48,6 +48,14 @@ SIGNATURES: dict[str, list[re.Pattern]] = {
         re.compile(r"(?:job-boards|boards)(?:\.eu)?\.greenhouse\.io/(?:embed/job_board\?(?:[^\"'\s]*&)?for=|v1/boards/)?" + _SLUG, re.I),
         re.compile(r"boards-api(?:\.eu)?\.greenhouse\.io/v1/boards/" + _SLUG, re.I),
         re.compile(r"grnh\.se/" + _SLUG, re.I),
+        # Branded careers sites that render the board client-side embed the token
+        # as a JS/JSON variable instead of a boards.greenhouse.io URL (e.g. a
+        # Next.js "PUBLIC_GREENHOUSE_BOARD":"acmeco"). Such a site's careers URL
+        # and its boards.greenhouse.io/<token> URL both redirect to the branded
+        # page, so nothing above matches — the var is the only signal. The
+        # separator is optional/underscore (never a space), so prose can't match,
+        # and verify() rejects any wrong token against the live board API.
+        re.compile(r"greenhouse[_-]?board(?:[_-]?token)?[\"']?\s*[:=]\s*[\"']" + _SLUG, re.I),
     ],
     LEVER: [
         re.compile(r"(?:jobs|api)(?:\.eu)?\.lever\.co/(?:v0/postings/)?" + _SLUG, re.I),
@@ -401,3 +409,31 @@ def candidate_slugs(name: str) -> list[str]:
         if g and g not in out:
             out.append(g)
     return out
+
+
+# Careers-subdomain / host noise that is never the brand label.
+_HOST_NOISE = {"www", "careers", "career", "jobs", "job", "apply", "work", "talent", "hire", "join"}
+
+
+def host_slug_candidates(url: str | None) -> list[str]:
+    """Slug guesses derived from a careers/website URL's host, best-first.
+
+    A user-supplied careers URL is strong brand evidence even when the tracked
+    company name differs from the ATS board slug, or when the careers page is
+    fully client-rendered and exposes no in-page signature (the board loads via
+    JS after the fetch). The host's registrable label ("exampleco" from
+    www.exampleco.com, careers.exampleco.com, or exampleco.com) is probed like a
+    name-derived slug — still gated by verify() + a non-empty board downstream,
+    so a wrong guess is rejected rather than trusted.
+    """
+    if not url:
+        return []
+    scheme_less = re.match(r"^[a-z][a-z0-9+.-]*:", url, re.I) is None
+    netloc = urlsplit(f"//{url}" if scheme_less else url).netloc
+    host = netloc.rsplit("@", 1)[-1].split(":", 1)[0].lower()  # strip any creds / port
+    labels = [seg for seg in host.split(".") if seg]
+    if len(labels) >= 2:
+        labels = labels[:-1]  # drop the TLD label
+    labels = [seg for seg in labels if seg not in _HOST_NOISE] or labels
+    brand = labels[-1] if labels else ""
+    return candidate_slugs(brand)
