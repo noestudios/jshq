@@ -22,9 +22,10 @@ import { api } from "../api.js";
    carried the shipped example's design taxonomy, so any install whose one
    vocab fetch failed silently rendered another person's career. It is a
    fallback, never a claim about this user's doc — anything real comes from
-   the endpoint. level_bands is most-senior-first, matching the doc order the
-   API preserves; "junior" is included because its absence was the bug this
-   module fixes. */
+   the endpoint. level_bands is most-senior-first; levelBands() sorts every
+   source into this same display order, because the doc serves match-order
+   (IC/Junior first) which reads as nonsense in a picker. "junior" is included
+   because its absence was the bug this module first fixed. */
 const FALLBACK = {
   level_bands: [
     { value: "vp_plus", label: "VP+" },
@@ -100,16 +101,31 @@ export function loadVocab() {
   return pending;
 }
 
-/* De-duplicated by value, first occurrence wins, doc order preserved (Map keeps
-   insertion order). The ladder legitimately lists a band twice — program titles
-   like "intern" outrank the seniority words, so "junior" sits both above and
-   below them — but a filter must offer each band exactly once. */
+/* Canonical DISPLAY order for the seniority pickers: most-senior-first, IC/Junior
+   last. The doc authors level_bands in *match* order (first-hit-wins pulls the
+   IC and Junior overrides to the top), which reads as nonsense in a picker — so
+   the display is sorted here, decoupled from the scoring match-order the backend
+   needs. Derived from the fallback, which is already in this order. */
+const DISPLAY_ORDER = FALLBACK.level_bands.map((b) => b.value);
+
+/* De-duplicated by value (first occurrence wins) and sorted into DISPLAY_ORDER.
+   The ladder legitimately lists a band twice — program titles like "intern"
+   outrank the seniority words, so "junior" sits both above and below them — but
+   a picker must offer each band exactly once. Bands the user adds that aren't in
+   DISPLAY_ORDER keep their doc order, after the known ladder (stable sort). */
 export function levelBands() {
   const byValue = new Map();
   for (const band of vocab.level_bands) {
     if (!byValue.has(band.value)) byValue.set(band.value, band);
   }
-  return [...byValue.values()];
+  const rank = (value) => {
+    const i = DISPLAY_ORDER.indexOf(value);
+    return i === -1 ? DISPLAY_ORDER.length : i;
+  };
+  return [...byValue.values()]
+    .map((band, i) => [band, i])
+    .sort((a, b) => rank(a[0].value) - rank(b[0].value) || a[1] - b[1])
+    .map(([band]) => band);
 }
 
 /* Display label for a stored level_band token. Falls back to the raw token

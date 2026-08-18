@@ -2105,6 +2105,19 @@ main#view {
 .time-pop-free {
   height: calc(1lh + 2 * var(--t-space-4) + 2px);
 }
+/* Native checkbox/radio controls must NOT inherit the text-input sizing above:
+   they'd render ~40px tall and stretch to the flex cell (different widths per
+   label), which is exactly the broken wizard seniority grid. Reset to the
+   intrinsic control box; the accent tick still follows body { accent-color }. */
+.form-field input[type="checkbox"],
+.form-field input[type="radio"] {
+  width: auto;
+  height: auto;
+  padding: 0;
+  border: 0;
+  background: none;
+  flex: none;
+}
 .form-field textarea {
   min-height: 60px;
   resize: vertical;
