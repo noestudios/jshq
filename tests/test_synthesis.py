@@ -5,7 +5,7 @@ import json
 
 import pytest
 
-from jshq import compose
+from jshq import aicfg, compose
 from jshq.scoring import synthesis
 from jshq.scoring.criteria import load_criteria
 from test_criteria import VALID_PARAMS
@@ -178,8 +178,8 @@ def test_propose_retries_once_and_pins_call_kwargs():
     assert len(usages) == 2
     assert data["away_toward"]["toward"] == ["deep coaching"]
     kwargs = state["kwargs"]
-    assert kwargs["model"] == synthesis.MODEL
-    assert kwargs["thinking"] == compose.THINKING  # load-bearing (compose.py)
+    assert kwargs["model"] == aicfg.DEFAULTS["synthesis"]
+    assert kwargs["thinking"] == {"type": "disabled"}  # load-bearing (aicfg.thinking_kwargs)
     assert kwargs["output_config"] == {"format": {"type": "json_schema", "schema": synthesis.SCHEMA}}
     assert kwargs["system"][0]["cache_control"] == {"type": "ephemeral"}
 

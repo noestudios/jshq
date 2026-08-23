@@ -1,0 +1,17 @@
+{
+  "uuid": "65d89c21-65ea-4259-bb9b-db41dcb007d3",
+  "name": "Principal UX Designer",
+  "companyName": "ExampleCo",
+  "board": "exampleco",
+  "url": "https://ats.rippling.com/exampleco/jobs/65d89c21-65ea-4259-bb9b-db41dcb007d3",
+  "unlistedFromSearch": false,
+  "employmentType": {"label": null, "id": "Full-Time"},
+  "workLocations": ["Remote (United States)"],
+  "payRangeDetails": [],
+  "department": {"id": "Product", "label": "Product"},
+  "jsonLd": {"description": null, "baseSalary": null},
+  "description": {
+    "company": "<p>ExampleCo builds infrastructure.</p>",
+    "role": "<p>Own the design system end to end.</p><p>The annual base pay range for this role is $170,000 - $210,000.</p>"
+  }
+}

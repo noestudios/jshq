@@ -1125,3 +1125,48 @@ def test_progress_counts_gated_jobs_up_front(db, seed_company):
     assert report["scored"] == 1 and report["tier1_failed"] == 2
     assert progress[0] == (2, 3, 0)   # gated writes published before the first batch
     assert progress[-1] == (3, 3, 0)  # ends at total, not at len(to_score)
+
+
+def test_analysis_override_threads_model_and_request_shape(db, seed_company):
+    """ai_models.analysis reroutes scoring end to end: the call carries the
+    override id, drops temperature (the Sonnet-5 tier 400s on sampling params),
+    sends thinking=disabled, and the ledger bills the model actually used —
+    never the shipped default."""
+    from jshq import aicfg
+    from jshq import usage as usage_mod
+
+    seed_job(db, seed_company())
+    state = {}
+
+    async def create(**kwargs):
+        state.clear()
+        state.update(kwargs)
+        return SimpleNamespace(
+            content=[SimpleNamespace(type="text", text=json.dumps(GOOD_PAYLOAD))],
+            usage=SimpleNamespace(
+                input_tokens=100, output_tokens=10,
+                cache_read_input_tokens=0, cache_creation_input_tokens=0,
+            ),
+        )
+
+    client = SimpleNamespace(messages=SimpleNamespace(create=create))
+
+    # Default (no ai_models row): the Haiku tier, temp 0, no thinking param.
+    assert run(db, client)["scored"] == 1
+    assert state["model"] == aicfg.DEFAULTS["scoring"]
+    assert state["temperature"] == 0.0
+    assert "thinking" not in state
+
+    db.execute(
+        "INSERT INTO settings (key, value) VALUES (?, ?)",
+        (aicfg.SETTING_KEY, json.dumps({"analysis": "claude-sonnet-5"})),
+    )
+    db.commit()
+    report = asyncio.run(scoring.run_scoring(db, only_pending=False, client=client))
+    assert report["scored"] == 1
+    assert state["model"] == "claude-sonnet-5"
+    assert "temperature" not in state
+    assert state["thinking"] == {"type": "disabled"}
+    by = usage_mod.read_usage_totals(db)["by_model"]
+    assert by["claude-sonnet-5"]["calls"] == 1  # billed as the model that ran
+    assert report["cost"] > 0

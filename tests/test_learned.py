@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from jshq import scoring
+from jshq import aicfg, scoring
 from jshq.scoring import haiku, learned
 from jshq.scoring.criteria import Criteria
 
@@ -70,7 +70,7 @@ def test_propose_happy_path():
     assert out["rule_text"].startswith("Down-rank")
     assert out["rationale"] == GOOD["rationale"]
     assert state["calls"] == 1
-    assert state["kwargs"]["model"] == learned.MODEL
+    assert state["kwargs"]["model"] == aicfg.DEFAULTS["learned"]
     assert state["kwargs"]["output_config"]["format"]["schema"] == learned.SCHEMA
 
 

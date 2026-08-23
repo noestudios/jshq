@@ -10,6 +10,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
+from . import errors
 from .scoring.criteria import (
     DEFAULT_TIER2_WEIGHT,
     MAX_TIER2_WEIGHT,
@@ -108,11 +109,45 @@ class SettingIn(BaseModel):
     value: list | dict | str | int | float | bool | None
 
 
+class AxisChoiceIn(BaseModel):
+    # One axis's provider+model choice (Providers Tier 2). Anthropic models are
+    # validated against aicfg's curated list at the endpoint; the compat
+    # endpoint takes a free-text model id (validated non-blank there too, where
+    # the 422 can carry the coded sentence).
+    provider: Literal["anthropic", "openai_compat"]
+    model: str | None = None
+
+
+class AiModelsIn(BaseModel):
+    # Per-axis overrides (Settings → System). None/absent = the shipped
+    # defaults; a bare string is the Tier-1 shorthand for an Anthropic model
+    # id (old clients and stored payloads keep working); an object names the
+    # provider explicitly.
+    analysis: str | AxisChoiceIn | None = None
+    writing: str | AxisChoiceIn | None = None
+
+
 class ApiKeyIn(BaseModel):
     # The Anthropic key, on its way to DATA_DIR/.env via apikey.write_key (which
     # revalidates: no whitespace, no control chars). NonEmptyStr strips and
     # rejects blank here so the empty-field case 422s before touching the file.
     key: NonEmptyStr
+
+
+class ScheduleIn(BaseModel):
+    # Per-job scheduler times. Values are validated by schedule.parse_times at
+    # the endpoint (coded 422), not here — the CLI shares that validator.
+    refresh: list[str]
+    backup: list[str]
+
+
+class AiProvidersIn(BaseModel):
+    # The OpenAI-compatible endpoint config (Providers Tier 2). base_url is
+    # validated at the endpoint (coded 422). api_key three-ways: a value saves
+    # it to .env, "" clears it, absent leaves the stored key alone — so
+    # re-saving the URL never silently wipes the key.
+    base_url: NonEmptyStr
+    api_key: str | None = None
 
 
 class Tier2Item(BaseModel):
@@ -209,12 +244,12 @@ class InclusionRule(BaseModel):
     @model_validator(mode="after")
     def _location_exclude_invalid(self):
         # There is no location exclusion list — a town allowlist (include) is the
-        # only location mechanism. Hard-gate it here as well as in the UI.
+        # only location mechanism. Hard-gate it here as well as in the UI. The
+        # message is user-facing prose: the validation handler passes value_error
+        # text through verbatim, code and all (error-audit P2 — the frontend
+        # matches the code, never this wording).
         if self.target == "location" and self.verb == "exclude":
-            raise ValueError(
-                "a location rule cannot be 'exclude' — there is no location "
-                "exclusion list; use a town allowlist (include) instead"
-            )
+            raise ValueError(errors.fmt(errors.RULE_LOCATION_EXCLUDE))
         return self
 
 

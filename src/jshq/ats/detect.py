@@ -65,6 +65,21 @@ async def _robots_allows(client: httpx.AsyncClient, url: str) -> bool:
         return True
 
 
+_IDENTITY_SAMPLE_JOBS = 3
+_IDENTITY_SAMPLE_CHARS = 4000
+
+
+def _identity_sample(postings: list, fields: tuple[str, ...]) -> str | None:
+    """Concatenated text from the first few postings, capped — enough for a
+    company-name scan without bloating evidence."""
+    parts = []
+    for posting in postings[:_IDENTITY_SAMPLE_JOBS]:
+        if isinstance(posting, dict):
+            parts.extend(str(posting[f]) for f in fields if posting.get(f))
+    sample = "\n".join(parts)[:_IDENTITY_SAMPLE_CHARS]
+    return sample or None
+
+
 async def verify(client: httpx.AsyncClient, ats_type: str, slug: str) -> dict | None:
     """Hit the ATS public API for (type, slug); return evidence dict or None."""
     try:
@@ -129,14 +144,21 @@ async def verify(client: httpx.AsyncClient, ats_type: str, slug: str) -> dict | 
         if r.status_code != 200:
             return None
         data = r.json()
+        identity_text = None
         if ats_type == p.GREENHOUSE:
             count = len(data.get("jobs", []))
         elif ats_type == p.LEVER:
             if not isinstance(data, list):
                 return None
             count = len(data)
+            identity_text = _identity_sample(
+                data, ("text", "descriptionPlain", "additionalPlain")
+            )
         elif ats_type == p.ASHBY:
             count = len(data.get("jobs", []))
+            identity_text = _identity_sample(
+                data.get("jobs") or [], ("title", "descriptionPlain")
+            )
         elif ats_type == p.SMARTRECRUITERS:
             count = data.get("totalFound", 0)
         elif ats_type == p.BREEZY:
@@ -150,9 +172,32 @@ async def verify(client: httpx.AsyncClient, ats_type: str, slug: str) -> dict | 
             if total is None:
                 return None
             count = total
+        elif ats_type == p.RECRUITEE:
+            offers = data.get("offers") if isinstance(data, dict) else None
+            if offers is None:  # non-tenant subdomains can 200 with other bodies
+                return None
+            count = len(offers)
+        elif ats_type == p.WORKABLE:
+            postings = data.get("jobs") if isinstance(data, dict) else None
+            if postings is None:
+                return None
+            count = len(postings)
+        elif ats_type == p.RIPPLING:
+            if not isinstance(data, list):
+                return None
+            count = len(data)
         else:
             return None
         evidence = {"endpoint": url, "job_count": count}
+        if identity_text:
+            # Lever/Ashby expose no board-name endpoint; posting text is the
+            # only identity evidence. Consumed (and stripped) by the blind
+            # probe loop; the signature path ignores it.
+            evidence["identity_text"] = identity_text
+        # Workable's widget response carries the account display name — same
+        # anti-collision evidence as NAME_TEMPLATES, no second call needed.
+        if ats_type == p.WORKABLE and data.get("name"):
+            evidence["board_name"] = data["name"]
         # Board display name, where the ATS exposes one — guards against a
         # name-derived slug landing on some other company's board.
         name_url = p.NAME_TEMPLATES.get(ats_type)
@@ -218,6 +263,7 @@ async def detect_company(client: httpx.AsyncClient, company: sqlite3.Row) -> dic
     for ats_type, slug in candidates:
         evidence = await verify(client, ats_type, slug)
         if evidence:
+            evidence.pop("identity_text", None)  # probe-only evidence, not stored
             result.update(
                 ats_type=ats_type,
                 ats_slug=slug,
@@ -229,28 +275,49 @@ async def detect_company(client: httpx.AsyncClient, company: sqlite3.Row) -> dic
     # Fallback: blind probe of slug-addressable ATS APIs. A probe is weaker
     # evidence than a signature found on the company's own page, so it must
     # clear a higher bar: a non-empty board (SmartRecruiters returns 200 with
-    # totalFound=0 for slugs that don't even exist), and — where the ATS
-    # exposes one — a board display name to eyeball against the company.
+    # totalFound=0 for slugs that don't even exist), AND identity evidence
+    # that actually names the tracked company — a guessed slug can land on a
+    # STRANGER'S board that happily 200s with jobs (Marigold Workshop →
+    # lever/marigold, an unrelated company). Board display name where the ATS
+    # exposes one (Greenhouse/SmartRecruiters); posting-text scan otherwise
+    # (Lever/Ashby have no board-name endpoint).
     # Host-derived slugs first: a user-supplied careers URL is stronger brand
     # evidence than the tracked name, and it is the only lead when the board is
     # client-rendered (no in-page signature) yet the company is tracked under a
     # name that does not match the board slug. Name-derived slugs follow.
+    # Identity for a HOST-derived slug may therefore match either the tracked
+    # name OR the host brand (the slug itself — name_matches tolerates dashed
+    # vs concatenated spellings); a NAME-derived slug must match the tracked
+    # name only, since matching the slug there would readmit exactly the
+    # truncation bug (the stranger "Marigold" text trivially contains "marigold").
+    host_slugs = p.host_slug_candidates(company["careers_url"] or company["website"])
     probe_slugs: list[str] = []
-    for slug in p.host_slug_candidates(
-        company["careers_url"] or company["website"]
-    ) + p.candidate_slugs(company["name"]):
+    for slug in host_slugs + p.candidate_slugs(company["name"]):
         if slug not in probe_slugs:
             probe_slugs.append(slug)
+    host_set = set(host_slugs)
     for slug in probe_slugs[:MAX_PROBE_SLUGS]:
         for ats_type in (p.GREENHOUSE, p.LEVER, p.ASHBY, p.SMARTRECRUITERS):
             evidence = await verify(client, ats_type, slug)
             if not evidence:
                 continue
+            identity_text = evidence.pop("identity_text", None)
             if not evidence.get("job_count"):
                 result["errors"].append(f"probe {ats_type}/{slug}: empty board, rejected")
                 continue
-            if ats_type in p.NAME_TEMPLATES and not evidence.get("board_name"):
-                result["errors"].append(f"probe {ats_type}/{slug}: no board name, rejected")
+            id_evidence = (
+                evidence.get("board_name")
+                if ats_type in p.NAME_TEMPLATES
+                else identity_text
+            )
+            identity_ok = p.name_matches(company["name"], id_evidence) or (
+                slug in host_set and p.name_matches(slug, id_evidence)
+            )
+            if not identity_ok:
+                kind = "board name" if ats_type in p.NAME_TEMPLATES else "board identity"
+                result["errors"].append(
+                    f"probe {ats_type}/{slug}: {kind} mismatch, rejected"
+                )
                 continue
             result.update(
                 ats_type=ats_type, ats_slug=slug, method="slug-probe", evidence=evidence

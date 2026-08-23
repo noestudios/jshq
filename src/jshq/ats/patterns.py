@@ -30,11 +30,14 @@ BREEZY = "breezy"
 CLEARCOMPANY = "clearcompany"
 APPLE = "apple"
 ATLASSIAN = "atlassian"
+RECRUITEE = "recruitee"
+WORKABLE = "workable"
+RIPPLING = "rippling"
 MANUAL = "manual"
 
 ATS_TYPES = (
     GREENHOUSE, LEVER, ASHBY, SMARTRECRUITERS, WORKDAY, ORACLE_HCM, ICIMS, BREEZY,
-    CLEARCOMPANY, APPLE, ATLASSIAN, MANUAL,
+    CLEARCOMPANY, APPLE, ATLASSIAN, RECRUITEE, WORKABLE, RIPPLING, MANUAL,
 )
 
 _SLUG = r"([A-Za-z0-9_-]+)"
@@ -124,10 +127,33 @@ SIGNATURES: dict[str, list[re.Pattern]] = {
     ATLASSIAN: [
         re.compile(r"(www\.atlassian\.com)/company/careers", re.I),
     ],
+    # Recruitee: per-company subdomain, same posture as Breezy — non-tenant
+    # subdomains (www/docs/…) fall through to verify(), which rejects them.
+    RECRUITEE: [
+        re.compile(r"([a-z0-9-]+)\.recruitee\.com", re.I),
+    ],
+    # Workable: hosted boards live at apply.workable.com/{slug}. The widget-API
+    # form is matched explicitly; on that same URL the bare form extracts "api"
+    # (a stopword). Job short-links (apply.workable.com/j/{code}) carry no slug
+    # — "j" is a stopword too.
+    WORKABLE: [
+        re.compile(r"apply\.workable\.com/api/v\d+/widget/accounts/" + _SLUG, re.I),
+        re.compile(r"apply\.workable\.com/" + _SLUG, re.I),
+    ],
+    # Rippling: hosted boards at ats.rippling.com/{slug}/jobs; the platform API
+    # form appears in embeds.
+    RIPPLING: [
+        re.compile(r"api\.rippling\.com/platform/api/ats/v\d+/board/" + _SLUG, re.I),
+        re.compile(r"ats\.rippling\.com/" + _SLUG, re.I),
+    ],
 }
 
-# Slugs that are URL path noise, never board identifiers.
-_SLUG_STOPWORDS = {"embed", "v1", "boards", "jobs", "job", "postings", "css", "js", "img"}
+# Slugs that are URL path noise, never board identifiers. "api" and "j" are
+# Workable path segments (widget API prefix, job short-links).
+_SLUG_STOPWORDS = {
+    "embed", "v1", "boards", "jobs", "job", "postings", "css", "js", "img",
+    "api", "j",
+}
 
 
 def workday_slug(tenant: str, wd: str, site: str | None) -> str | None:
@@ -231,6 +257,11 @@ API_TEMPLATES = {
     SMARTRECRUITERS: "https://api.smartrecruiters.com/v1/companies/{slug}/postings",
     BREEZY: "https://{slug}.breezy.hr/json",
     CLEARCOMPANY: "https://careers-api.clearcompany.com/v1/{slug}",
+    RECRUITEE: "https://{slug}.recruitee.com/api/offers/",
+    # The widget path is the public one-shot feed; spi/v3 and api/v3/accounts
+    # are NOT it (404 / non-JSON — probed 2026-08-20).
+    WORKABLE: "https://apply.workable.com/api/v1/widget/accounts/{slug}?details=true",
+    RIPPLING: "https://api.rippling.com/platform/api/ats/v1/board/{slug}/jobs",
 }
 
 # Board-name endpoints, used to sanity-check blind slug probes.
@@ -245,6 +276,9 @@ PUBLIC_BOARD_TEMPLATES = {
     ASHBY: "https://jobs.ashbyhq.com/{slug}",
     SMARTRECRUITERS: "https://careers.smartrecruiters.com/{slug}",
     BREEZY: "https://{slug}.breezy.hr",
+    RECRUITEE: "https://{slug}.recruitee.com",
+    WORKABLE: "https://apply.workable.com/{slug}",
+    RIPPLING: "https://ats.rippling.com/{slug}/jobs",
 }
 
 
@@ -295,6 +329,14 @@ def clearcompany_list_url(slug: str, page: int = 1) -> str:
     and ignore ?p entirely — the adapter guards on repeated ids)."""
     base = API_TEMPLATES[CLEARCOMPANY].format(slug=slug)
     return base if page <= 1 else f"{base}?p={page}"
+
+
+def rippling_list_url(slug: str) -> str:
+    return API_TEMPLATES[RIPPLING].format(slug=slug)
+
+
+def rippling_detail_url(slug: str, uuid: str) -> str:
+    return f"{rippling_list_url(slug)}/{uuid}"
 
 
 def breezy_list_url(slug: str) -> str:
@@ -389,6 +431,32 @@ _NOISE_WORDS = {"of", "the", "inc", "llc", "co", "corp", "group", "foundation", 
 def _asciify(name: str) -> str:
     name = name.translate(_ASCII_MAP)
     return unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode()
+
+
+def name_matches(company_name: str, text: str | None) -> bool:
+    """Does board identity evidence actually name this company?
+
+    Guard for BLIND slug probes only (signature-found candidates from the
+    company's own page stay trusted): a name-derived slug can land on a
+    stranger's board that happily 200s with jobs — the Marigold Workshop →
+    lever/marigold mis-map. Require EVERY core token of the company
+    name in the evidence text (word-bounded, or the full core concatenation
+    as a substring for "MarigoldWorkshop Careers"-style spellings). Strictness
+    is deliberate: a false negative is a NULL the user maps by hand; a false
+    positive silently poisons the mapping.
+    """
+    if not text:
+        return False
+    words = re.findall(r"[a-z0-9]+", _asciify(company_name).lower())
+    core = [w for w in words if w not in _NOISE_WORDS] or words
+    if not core:
+        return False
+    text_norm = " ".join(re.findall(r"[a-z0-9]+", _asciify(text).lower()))
+    # Concatenated spelling only helps multi-token names; for a single token
+    # it would degrade to bare substring matching ("box" inside "toolbox").
+    if len(core) > 1 and "".join(core) in text_norm.replace(" ", ""):
+        return True
+    return all(re.search(rf"\b{re.escape(tok)}\b", text_norm) for tok in core)
 
 
 def candidate_slugs(name: str) -> list[str]:

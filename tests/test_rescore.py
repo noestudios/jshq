@@ -67,9 +67,11 @@ def test_run_rescore_full_scores_and_stamps(db, monkeypatch):
 
 def test_rescore_estimate_shape(client):
     body = client.get("/api/scoring/rescore-estimate").json()
-    assert set(body) == {"active", "to_score", "tier1_failed", "est_cost_usd"}
-    # no jobs seeded -> nothing to score, zero estimated cost
+    assert set(body) == {"active", "to_score", "tier1_failed", "est_cost_usd", "pricing"}
+    # no jobs seeded -> nothing to score, zero estimated cost on the default
+    # (priced, Anthropic) scoring binding
     assert body["active"] == 0 and body["est_cost_usd"] == 0
+    assert body["pricing"] == "estimated"
 
 
 # --- completion pop-ups (app.notify — osascript patched by the autouse fixture) ---

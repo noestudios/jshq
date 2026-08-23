@@ -1,0 +1,54 @@
+{
+  "name": "ExampleCo",
+  "description": "<p>ExampleCo is a branding business.</p>",
+  "jobs": [
+    {
+      "title": "Senior Product Designer",
+      "shortcode": "A755C605B8",
+      "code": "",
+      "employment_type": "Full-time",
+      "telecommuting": true,
+      "department": "Design",
+      "url": "https://apply.workable.com/j/A755C605B8",
+      "shortlink": "https://apply.workable.com/j/A755C605B8",
+      "application_url": "https://apply.workable.com/j/A755C605B8/apply",
+      "published_on": "2026-08-10",
+      "created_at": "2026-02-25",
+      "country": "United States",
+      "city": "",
+      "state": "",
+      "education": "",
+      "experience": "Mid-Senior level",
+      "function": "",
+      "industry": "Marketing and Advertising",
+      "locations": [
+        {"country": "United States", "countryCode": "US", "city": "", "region": "", "hidden": false}
+      ],
+      "description": "<p>Design end to end.</p><p>The annual base pay range for this role is $150,000 - $190,000.</p>"
+    },
+    {
+      "title": "Group Business Director",
+      "shortcode": "B866D716C9",
+      "code": "",
+      "employment_type": "Full-time",
+      "telecommuting": false,
+      "department": "Account Management",
+      "url": "https://apply.workable.com/j/B866D716C9",
+      "shortlink": "https://apply.workable.com/j/B866D716C9",
+      "application_url": "https://apply.workable.com/j/B866D716C9/apply",
+      "published_on": "2026-08-10",
+      "created_at": "2026-02-25",
+      "country": "United Kingdom",
+      "city": "London",
+      "state": "England",
+      "education": "",
+      "experience": "Director",
+      "function": "",
+      "industry": "Marketing and Advertising",
+      "locations": [
+        {"country": "United Kingdom", "countryCode": "GB", "city": "London", "region": "England", "hidden": false}
+      ],
+      "description": "<p>Lead client relationships.</p>"
+    }
+  ]
+}

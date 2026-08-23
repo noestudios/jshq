@@ -57,8 +57,10 @@ def _insert(db: sqlite3.Connection, table: str, fields: dict) -> int:
 
 @pytest.fixture(autouse=True)
 def _no_live_anthropic(monkeypatch):
-    """No test may ever reach the real API (CLAUDE.md hard rule)."""
+    """No test may ever reach a real AI endpoint (CLAUDE.md hard rule) — the
+    suite runs keyless AND endpointless."""
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("JSHQ_OPENAI_COMPAT_API_KEY", raising=False)
 
 
 @pytest.fixture(autouse=True)

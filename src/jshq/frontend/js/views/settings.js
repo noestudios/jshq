@@ -33,6 +33,7 @@ import {
 import { buzz, chime, preview, setSoundEnabled, soundEnabled } from "../lib/notify.js";
 import { getThemePref, setThemePref } from "../lib/theme.js";
 import { helpHintHtml } from "../lib/helpHint.js";
+import { timeFieldHtml } from "../lib/timepicker.js";
 import { refresh as refreshOnboardingTracker } from "../lib/onboardingTracker.js";
 // Aliased: `criteriaError` below is this view's own 422-validation state, a
 // different thing from the doc-level parse failure the vocab endpoint reports.
@@ -44,6 +45,9 @@ let criteriaBaseline = null; // last server-synced criteria payload (object — 
 let criteriaError = null; // { field, message } | null — persistent, field-anchored
 let rulesError = null; // { message } | null — persistent inclusion-rules error (not a toast)
 let pendingFocus = null; // { sel, start?, end? } | null — preferred focus target after next paint
+let pickerIntent = null; // "anthropic" | "openai_compat" | null — provider picked but not yet ready; the pane's Save completes the switch
+let aiAdvancedOpen = false; // the per-task routing disclosure survives repaints (forced open while the axes are split)
+let scheduleSlots = null; // {refresh: [...], backup: [...]} | null — in-progress time-slot edits (add/remove); null = mirror the saved times
 let justAddedChip = null; // "kind|key|value" of the chip to fade in on the next paint (one-shot)
 // Add-rule composer draft (survives paint; synced DOM->state like criteria text).
 let composer = { verb: "include", target: "title", term: "" };
@@ -60,18 +64,6 @@ const TABS = [
   { id: "system", label: "System" },
 ];
 
-/* Tier 1 keys, used to map a 422 detail string back to the field it names. */
-const CRIT_FIELDS = [
-  "comp_floor",
-  "comp_target",
-  "location_allowlist",
-  "location_radius",
-  "company_location_overrides",
-  "remote_regions",
-  "excluded_sectors",
-  "target_title_bands",
-  "flag_title_bands",
-];
 const CRIT_LABELS = {
   comp_floor: "Comp floor",
   comp_target: "Comp target",
@@ -94,11 +86,14 @@ const ITEM_NOUNS = {
   remote_regions: "remote region",
   excluded_sectors: "industry",
   target_title_bands: "title band",
+  linkedin_title_defaults: "job title",
 };
 
 const state = {
-  settings: { dismiss_reasons: [], contact_sources: [] }, // title arrays are rule-managed now (state.compiled)
+  settings: { dismiss_reasons: [], contact_sources: [], linkedin_title_defaults: [] }, // title arrays are rule-managed now (state.compiled)
   suggestions: [], // typed [{type:"title_exclude", keyword, count, examples}] — Sourcing
+  titleSuggestions: [], // pending AI LinkedIn-title cards [{title, why}] — view-local, never persisted
+  titleSuggestBusy: false, // Suggest-with-AI in flight
   scoringProposals: [], // typed [{type:"scoring_rule", id, text, rationale, source, job_title}] — Scoring queue
   scoringRules: [], // accepted learned scoring rules [{id, text, source, job_title}] — Scoring active list
   companies: [], // known company names, for the per-company override dropdown
@@ -110,7 +105,12 @@ const state = {
   notifyPopups: true, // settings.notify_popups — absent key = ON (only stored false disables)
   apiKeyDeclined: false, // settings.api_key_declined — explicit "I don't want a key"
   apiKey: null, // {configured, masked, source, editable} from GET /api/settings/api-key
+  aiModels: null, // {analysis, writing, models:[{id,label}], defaults, calibrated_scoring_model}
+  aiProviders: null, // {configured, base_url, local, key:{configured,masked,source,editable}}
   apiKeyTest: null, // {ok, error} | "pending" | null — last Test result (view-local)
+  aiProvidersTest: null, // {ok, error, models} | "pending" | null — last endpoint Test (view-local)
+  compatModels: [], // model ids from the last successful endpoint Test (datalist food)
+  schedule: null, // {supported, platform, times:{refresh,backup}, installed:{refresh,backup}} from GET /api/schedule
   persona: null, // {display_name, domain_label} from GET /api/scoring/persona
   voiceGuide: "", // the editable voice-guide markdown (working copy, synced from the textarea)
   synthesis: null, // {proposal, available} from GET /api/scoring/synthesis
@@ -124,10 +124,11 @@ const state = {
 /* ---------- data ---------- */
 
 async function load() {
-  const [reasons, sources, suggestions, criteria, status, companies, rulesData, scoringRules, popups, apiKey, persona, voiceGuide, synthesis, declined] =
+  const [reasons, sources, linkedinTitles, suggestions, criteria, status, companies, rulesData, scoringRules, popups, apiKey, persona, voiceGuide, synthesis, declined, aiModels, aiProviders, scheduleStatus] =
     await Promise.all([
       api.getSetting("dismiss_reasons"),
       api.getSetting("contact_sources"),
+      api.getSetting("linkedin_title_defaults"),
       api.getSuggestions(),
       api.getCriteria(),
       api.refreshStatus(),
@@ -140,15 +141,22 @@ async function load() {
       api.getVoiceGuide(),
       api.getSynthesis().catch(() => null),
       api.getSetting("api_key_declined"),
+      api.getAiModels(),
+      api.getAiProviders(),
+      api.getSchedule(),
     ]);
   state.synthesis = synthesis;
   state.apiKey = apiKey;
+  state.aiModels = aiModels;
+  state.aiProviders = aiProviders;
+  state.schedule = scheduleStatus;
   state.apiKeyDeclined = declined.value === true; // absent key returns [] — treat as not declined
   state.persona = persona;
   state.voiceGuide = voiceGuide.markdown || "";
   state.notifyPopups = popups.value !== false; // absent key returns [] — still ON
   state.settings.dismiss_reasons = reasons.value || [];
   state.settings.contact_sources = sources.value || [];
+  state.settings.linkedin_title_defaults = linkedinTitles.value || [];
   applySuggestions(suggestions);
   state.scoringRules = scoringRules.rules || [];
   state.status = status;
@@ -591,7 +599,60 @@ function sourcingTab() {
       <div class="section-head"><h2 class="section-title">Contact sources</h2></div>
       <p class="settings-help">The how-you-met dropdown on contacts.</p>
       ${tagsHtml("set", "contact_sources", state.settings.contact_sources)}
+    </div>
+
+    <div class="section">
+      <div class="section-head"><h2 class="section-title">LinkedIn role checks</h2></div>
+      <p class="settings-help">The default job titles behind the LinkedIn role checks on a company's detail pane. Companies you add from now on start with this list; each company's own list stays editable on its detail pane.</p>
+      ${tagsHtml("set", "linkedin_title_defaults", state.settings.linkedin_title_defaults)}
+      ${linkedinSuggestHtml()}
     </div>`;
+}
+
+/* Suggest-with-AI for the LinkedIn defaults: adjacent-discipline titles the
+   deterministic wizard derivation can't reach (a designer also networks with
+   UX researchers). Renders NOTHING keyless — the button exists only when a key
+   is configured. Suggestions are review-then-add cards; nothing joins the list
+   without an explicit Add. */
+function linkedinSuggestHtml() {
+  if (!state.apiKey?.configured) return "";
+  const cards = state.titleSuggestions
+    .map(
+      (s) => `
+    <div class="suggestion-card">
+      <div class="suggestion-text">
+        <strong>${esc(s.title)}</strong>
+        ${s.why ? `<div class="suggestion-examples">${esc(s.why)}</div>` : ""}
+      </div>
+      <div class="suggestion-actions">
+        <button class="btn" data-action="linkedin-suggest-add" data-key="${esc(s.title)}">Add</button>
+        <button class="btn btn-ghost" data-action="linkedin-suggest-ignore" data-key="${esc(s.title)}">Ignore</button>
+      </div>
+    </div>`
+    )
+    .join("");
+  return `
+    <div class="settings-savebar">
+      <button type="button" class="btn btn-ghost" data-action="linkedin-suggest"${state.titleSuggestBusy ? " disabled" : ""}>${state.titleSuggestBusy ? "Suggesting…" : "Suggest with AI"}</button>
+    </div>
+    ${cards}`;
+}
+
+async function suggestLinkedinTitles() {
+  state.titleSuggestBusy = true;
+  paint();
+  try {
+    const resp = await api.suggestLinkedinTitles();
+    // Drop anything already on the list (it may have changed since the call).
+    const have = new Set(state.settings.linkedin_title_defaults.map((t) => t.toLowerCase()));
+    state.titleSuggestions = (resp.suggestions || []).filter((s) => !have.has(s.title.toLowerCase()));
+    if (!state.titleSuggestions.length) toast("No new titles to suggest");
+  } catch (error) {
+    toast(error.detail || error.message, { error: true });
+  } finally {
+    state.titleSuggestBusy = false;
+    paint();
+  }
 }
 
 /* One location block. Two peer "modes" feed the same Tier 1 pass decision: a
@@ -985,25 +1046,29 @@ async function synthesisDiscard() {
   paint();
 }
 
-/* The Anthropic API key section (Phase 3). AI features degrade gracefully with
-   no key; this is where a user turns them on without hand-editing a .env. The
-   key is never rendered — only the server's masked status is shown. */
-function apiKeySection() {
+/* The Anthropic credential pane (Phase 3; unified AI section 2026-08-22).
+   AI features degrade gracefully with no key; this is where a user turns them
+   on without hand-editing a .env. The key is never rendered — only the
+   server's masked status is shown. Rendered inside aiSection() when the
+   provider picker shows Anthropic; the markup and actions are unchanged. */
+function apiKeyPane() {
   const k = state.apiKey || { configured: false, source: null, editable: true };
   const shadowed = k.source === "environment"; // an env var / cwd .env wins over our .env
   const declined = state.apiKeyDeclined === true; // explicit "I don't want a key"
   const inputsOff = shadowed || declined; // declining disables the field + Save
-  // The decline option only makes sense with no key; a configured key hides it.
-  const declineRow = k.configured
+  // The decline option only makes sense with no AI at all — no key AND no
+  // endpoint (either one means AI is already on). It declines the whole
+  // feature: while checked, aiSection() greys the endpoint path out too.
+  const declineRow = k.configured || state.aiProviders?.configured
     ? ""
     : `
       <label class="form-check">
         <input type="checkbox" data-action="toggle-decline-key" ${declined ? "checked" : ""} />
-        I don't want to use an API key
+        I don't want to use AI
       </label>
       ${
         declined
-          ? `<p class="field-error">AI features stay off without a key: postings aren't scored or explained, and there are no AI-drafted messages, cover-letter tailoring, or job-URL prefill. Everything else — pulling, filtering, tracking — works as normal. Uncheck this to add a key.</p>`
+          ? `<p class="field-error">AI features stay off: postings aren't scored or explained, and there are no AI-drafted messages, cover-letter tailoring, or job-URL prefill. Everything else — pulling, filtering, tracking — works as normal. Uncheck this to set up a provider.</p>`
           : ""
       }`;
   const test = state.apiKeyTest;
@@ -1019,9 +1084,7 @@ function apiKeySection() {
     ? `<strong>Configured</strong> <code>${esc(k.masked || "")}</code>`
     : `<strong>Not configured</strong> — AI features (scoring, compose, tailoring) are off`;
   return `
-    <div class="section">
-      <div class="section-head"><h2 class="section-title">Anthropic API key</h2></div>
-      <p class="settings-help">Bring your own key to turn on the AI features. It is stored in <code>.env</code> in your data directory on this machine and sent only to api.anthropic.com — never anywhere else.</p>
+      <p class="settings-help">Bring your own Anthropic key. It is stored in <code>.env</code> in your data directory on this machine and sent only to api.anthropic.com — never anywhere else.</p>
       <p class="settings-help">Status: ${status}.</p>
       ${
         shadowed
@@ -1029,14 +1092,107 @@ function apiKeySection() {
           : ""
       }
       <div class="settings-savebar">
-        <input type="password" class="settings-add-input" data-api-key-input placeholder="sk-ant-…" autocomplete="off" aria-label="Anthropic API key" ${inputsOff ? "disabled" : ""} />
+        <input type="password" class="settings-add-input settings-cred-input" data-api-key-input placeholder="sk-ant-…" autocomplete="off" aria-label="Anthropic API key" ${inputsOff ? "disabled" : ""} />
         <button type="button" class="btn btn-accent" data-action="save-api-key" ${inputsOff ? "disabled" : ""}>Save</button>
         <button type="button" class="btn btn-ghost" data-action="test-api-key" ${k.configured && !declined ? "" : "disabled"}>Test</button>
         ${k.configured && !shadowed ? `<button type="button" class="btn btn-ghost btn-danger" data-action="remove-api-key">Remove</button>` : ""}
       </div>
       ${declineRow}
       ${testLine}
-      <p class="settings-help"><a href="https://platform.claude.com/settings/keys" target="_blank" rel="noopener">Get an API key →</a></p>
+      <p class="settings-help"><a href="https://platform.claude.com/settings/keys" target="_blank" rel="noopener">Get an API key →</a></p>`;
+}
+
+/* The OpenAI-compatible endpoint (Providers Tier 2): base URL + optional key.
+   Mirrors apiKeyPane's contract — the key is never rendered, only the
+   server's masked status; the base URL is configuration, shown in full. */
+/* The OpenAI-compatible credential pane (Tier 2; unified AI section
+   2026-08-22). Rendered inside aiSection() when the picker shows the
+   endpoint; markup and actions unchanged. */
+function endpointPane() {
+  const p = state.aiProviders || { configured: false, base_url: null, local: null, key: { configured: false, editable: true } };
+  const keyShadowed = p.key && p.key.source === "environment";
+  const test = state.aiProvidersTest;
+  let testLine = "";
+  if (test === "pending") {
+    testLine = `<p class="settings-help">Testing…</p>`;
+  } else if (test && test.ok) {
+    testLine = `<p class="settings-help">The endpoint works${test.models?.length ? ` — serving ${test.models.length} model${test.models.length === 1 ? "" : "s"}` : ""}.</p>`;
+  } else if (test && test.error) {
+    testLine = `<p class="field-error">${esc(test.error)}</p>`;
+  }
+  const status = p.configured
+    ? `<strong>Configured</strong> <code>${esc(p.base_url || "")}</code> (${p.local ? "local — nothing leaves this machine" : "remote"})${p.key?.configured ? ` · key <code>${esc(p.key.masked || "")}</code>` : ""}`
+    : `<strong>Not configured</strong> — AI tasks stay on Anthropic`;
+  // Plain-http to a non-loopback host travels the network unencrypted — worth
+  // one honest line right where the URL was typed.
+  const cleartext =
+    p.configured && !p.local && (p.base_url || "").startsWith("http://")
+      ? `<p class="field-error">This URL is plain http to another machine — traffic (including job text and your documents) is unencrypted on the network. Prefer https for anything beyond this machine.</p>`
+      : "";
+  return `
+      <p class="settings-help">Point AI tasks at any OpenAI-compatible server — a local runtime like Ollama or LM Studio, or a hosted provider. Whatever a task needs (your criteria, the job posting, your persona name, voice guide, and resume content when tailoring) is sent to this URL for the tasks you point at it — and nowhere else. A localhost endpoint keeps all of it on this machine.</p>
+      <p class="settings-help">Status: ${status}.</p>
+      ${cleartext}
+      ${
+        keyShadowed
+          ? `<p class="field-error">The endpoint key comes from your environment (an exported variable or a project <code>.env</code>), which takes precedence. Saving here won't override it.</p>`
+          : ""
+      }
+      <div class="settings-savebar">
+        <input type="text" class="settings-add-input settings-cred-input" data-compat-url-input value="${esc(p.base_url || "")}" placeholder="http://localhost:11434/v1" autocomplete="off" spellcheck="false" aria-label="Endpoint base URL" />
+        <input type="password" class="settings-add-input settings-cred-input" data-compat-key-input placeholder="API key (optional)" autocomplete="off" aria-label="Endpoint API key" ${keyShadowed ? "disabled" : ""} />
+        <button type="button" class="btn btn-accent" data-action="save-ai-providers">Save</button>
+        <button type="button" class="btn btn-ghost" data-action="test-ai-providers" ${p.configured ? "" : "disabled"}>Test</button>
+        ${p.configured ? `<button type="button" class="btn btn-ghost btn-danger" data-action="remove-ai-providers">Remove</button>` : ""}
+      </div>
+      ${testLine}`;
+}
+
+/* Scheduling: the OS-level entries that run `jshq refresh` and `jshq backup`
+   on their own. Times live in the `schedule` settings row (the same source of
+   truth the CLI reads); installed state is read live from the OS. */
+function scheduleSection() {
+  const s = state.schedule;
+  if (!s) return "";
+  if (!s.supported) {
+    return `
+    <div class="section">
+      <div class="section-head"><h2 class="section-title">Scheduling</h2></div>
+      <p class="settings-help">Automatic scheduling isn't supported on this system. Point your own scheduler at <code>jshq refresh</code> (twice a day) and <code>jshq backup</code> (nightly) instead — the README shows how.</p>
+    </div>`;
+  }
+  const installed = s.installed.refresh || s.installed.backup;
+  const status = installed
+    ? `<strong>On</strong> — refresh ${s.installed.refresh ? `at ${esc(s.times.refresh.join(", "))}` : "not installed"}, backup ${s.installed.backup ? `at ${esc(s.times.backup.join(", "))}` : "not installed"} (${esc(s.platform)})`
+    : `<strong>Off</strong> — nothing runs until you install the schedule (or point your own scheduler at <code>jshq refresh</code> and <code>jshq backup</code>)`;
+  // One house time picker per slot (the same control the reminder modal
+  // uses), plus add/remove — the schedule is a variable-length list of
+  // times per job, which a single field can't model.
+  const jobRow = (job, label) => {
+    const slots = scheduleSlots?.[job] ?? s.times[job];
+    return `
+      <div class="settings-savebar" data-schedule-job="${job}">
+        <span class="settings-help">${label}</span>
+        ${slots
+          .map(
+            (t, i) => `<span class="schedule-slot">${timeFieldHtml(t, { name: `sched-${job}-${i}`, title: `${label} time` })}<button type="button" class="btn btn-ghost" data-action="schedule-slot-remove" data-job="${job}" data-i="${i}" aria-label="Remove this ${label.toLowerCase()} time">✕</button></span>`
+          )
+          .join("")}
+        <button type="button" class="btn btn-ghost" data-action="schedule-slot-add" data-job="${job}">+ Add time</button>
+      </div>`;
+  };
+  return `
+    <div class="section">
+      <div class="section-head"><h2 class="section-title">Scheduling</h2></div>
+      <p class="settings-help">Let the app stay current on its own: OS scheduler entries that run the board refresh and the nightly verified backup. Local only — installing writes a ${esc(s.platform)} entry on this machine, nothing else.</p>
+      <p class="settings-help">Status: ${status}.</p>
+      ${jobRow("refresh", "Refresh at")}
+      ${jobRow("backup", "Back up at")}
+      <div class="settings-savebar">
+        <button type="button" class="btn btn-accent" data-action="install-schedule">${installed ? "Apply" : "Install"}</button>
+        ${installed ? `<button type="button" class="btn btn-ghost btn-danger" data-action="remove-schedule">Remove</button>` : ""}
+      </div>
+      <p class="settings-help">Add more refresh times for extra pulls a day. The same entries are managed by <code>jshq schedule</code> on the command line.</p>
     </div>`;
 }
 
@@ -1045,7 +1201,10 @@ function apiKeySection() {
 function personaSection() {
   const p = state.persona || { display_name: null, domain_label: "" };
   const name = p.display_name || "";
-  const label = p.domain_label || "";
+  // The neutral default ("the roles you are searching for") is served flagged:
+  // placeholder prose, never a value — render it as an empty input so it can't
+  // be edited-around and re-saved as if the user wrote it.
+  const label = p.domain_label_is_default ? "" : p.domain_label || "";
   return `
     <div class="section">
       <div class="section-head"><h2 class="section-title">Persona</h2></div>
@@ -1063,6 +1222,171 @@ function personaSection() {
       <div class="settings-savebar">
         <button type="button" class="btn btn-accent" data-action="save-persona">Save persona</button>
       </div>
+    </div>`;
+}
+
+/* Which provider runs the AI tasks, DERIVED from the two axes — never
+   stored, so it can't drift from reality: both axes unset-or-Anthropic reads
+   Anthropic (unset IS the per-task Anthropic default), both on the endpoint
+   reads the endpoint, a split reads per-task. */
+function derivedProvider() {
+  const cfg = state.aiModels;
+  if (!cfg) return "anthropic";
+  const prov = (axis) => (cfg[axis]?.provider === "openai_compat" ? "openai_compat" : "anthropic");
+  return prov("analysis") === prov("writing") ? prov("analysis") : "per_task";
+}
+
+/* The unified AI section (2026-08-22, owner direction): ONE surface — a
+   provider picker that sets the active provider for every AI task, the
+   picked provider's credential pane (apiKeyPane / endpointPane, moved
+   verbatim), a simple model row, and the per-task analysis/writing split as
+   an Advanced disclosure. Switching the picker never touches the other
+   provider's credentials, and axis models are remembered per provider
+   (aicfg `remembered`), so nothing is lost by switching back and forth.
+   Per-axis semantics are unchanged from Tiers 1-2: each axis is null
+   (Default: the shipped Anthropic tiers) or a {provider, model} object;
+   Anthropic keeps the curated select; the compat endpoint takes a free-text
+   model id (committed on change, fed by the last endpoint Test's model
+   list). Saved on change like the toggles — there is nothing to stage. */
+function aiSection() {
+  const cfg = state.aiModels;
+  if (!cfg) return "";
+  const compatReady = state.aiProviders?.configured === true;
+  const label = (id) => (cfg.models.find((m) => m.id === id) || { label: id }).label;
+  const defaultsFor = (axis) => [...new Set(Object.values(cfg.defaults?.[axis] || {}))].map(label).join(" / ");
+  const axisProvider = (axis) => (cfg[axis]?.provider === "openai_compat" ? "openai_compat" : "anthropic");
+  const providerSelect = (axis, fieldLabel) => {
+    const provider = axisProvider(axis);
+    return `
+      <div class="field">
+        <label class="field-label" for="ai-provider-${axis}">${fieldLabel} provider</label>
+        <select id="ai-provider-${axis}" data-ai-provider-axis="${axis}" aria-label="${fieldLabel} provider">
+          <option value="anthropic"${provider === "anthropic" ? " selected" : ""}>Anthropic</option>
+          <option value="openai_compat"${provider === "openai_compat" ? " selected" : ""}${compatReady ? "" : " disabled"}>Your endpoint${compatReady ? "" : " (configure above)"}</option>
+        </select>
+      </div>`;
+  };
+  const modelControl = (axis, fieldLabel) => {
+    const choice = cfg[axis]; // null | {provider, model}
+    if (axisProvider(axis) === "anthropic") {
+      const current = choice?.model || "";
+      return `
+        <div class="field">
+          <label class="field-label" for="ai-model-${axis}">${fieldLabel} model</label>
+          <select id="ai-model-${axis}" data-ai-model-axis="${axis}" aria-label="${fieldLabel} model">
+            <option value=""${current ? "" : " selected"}>Default (${esc(defaultsFor(axis))})</option>
+            ${cfg.models
+              .map((m) => `<option value="${esc(m.id)}"${current === m.id ? " selected" : ""}>${esc(m.label)}</option>`)
+              .join("")}
+          </select>
+        </div>`;
+    }
+    return `
+        <div class="field">
+          <label class="field-label" for="ai-model-${axis}">${fieldLabel} model id</label>
+          <input type="text" id="ai-model-${axis}" data-ai-compat-model="${axis}" value="${esc(choice?.model || "")}" placeholder="e.g. llama3.3" list="compat-models-${axis}" autocomplete="off" spellcheck="false" aria-label="${fieldLabel} model id" />
+          <datalist id="compat-models-${axis}">
+            ${(state.compatModels || []).map((id) => `<option value="${esc(id)}"></option>`).join("")}
+          </datalist>
+        </div>`;
+  };
+  const axisControls = (axis, fieldLabel) => providerSelect(axis, fieldLabel) + modelControl(axis, fieldLabel);
+  const a = cfg.analysis;
+  const uncalibrated = a && (a.provider !== "anthropic" || a.model !== cfg.calibrated_scoring_model);
+  const analysisLabel = a
+    ? a.provider === "anthropic"
+      ? label(a.model)
+      : `${a.model} via your endpoint`
+    : "";
+  const compatPending =
+    (cfg.analysis?.provider === "openai_compat" && !cfg.analysis.model) ||
+    (cfg.writing?.provider === "openai_compat" && !cfg.writing.model);
+
+  const derived = derivedProvider();
+  const active = pickerIntent || derived;
+  // "I don't want to use AI" declines the whole feature: while checked (and
+  // nothing is configured), the endpoint path greys out with the key form.
+  const declinedAll =
+    state.apiKeyDeclined === true && !state.apiKey?.configured && !compatReady;
+  const segBtn = (value, text, off = false) =>
+    `<button type="button" data-action="pick-provider" data-value="${value}" aria-pressed="${active === value}"${off ? " disabled" : ""}>${text}</button>`;
+  const picker = `
+      <div class="theme-seg ai-provider-seg" role="group" aria-label="AI provider">
+        ${segBtn("anthropic", "Anthropic")}
+        ${segBtn("openai_compat", "Your endpoint", declinedAll)}
+        ${derived === "per_task" ? `<button type="button" aria-pressed="${active === "per_task"}" disabled>Per-task</button>` : ""}
+      </div>`;
+  const intentNote = pickerIntent
+    ? `<p class="settings-help">AI tasks switch to ${pickerIntent === "anthropic" ? "Anthropic" : "your endpoint"} once it's set up below.</p>`
+    : "";
+  let pane;
+  if (active === "anthropic") {
+    pane = apiKeyPane();
+  } else if (active === "openai_compat") {
+    pane = endpointPane();
+  } else {
+    // Per-task: both credential stores stay reachable.
+    pane =
+      `<p class="settings-help"><strong>Anthropic</strong></p>` + apiKeyPane() +
+      `<p class="settings-help"><strong>Your endpoint</strong></p>` + endpointPane();
+  }
+  // The simple model row for the active provider. Anthropic keeps the two
+  // curated selects (Default = the shipped per-task tiers); the endpoint
+  // takes one model id applied to both axes. Hidden mid-intent for
+  // Anthropic (the axes still point elsewhere until the switch completes);
+  // the endpoint's model field DOES render mid-intent — it is part of
+  // finishing that setup.
+  let simpleModels = "";
+  if (active === "openai_compat") {
+    const rem = cfg.remembered || {};
+    const bothSame =
+      derived === "openai_compat" && cfg.analysis?.model === cfg.writing?.model
+        ? cfg.analysis?.model || ""
+        : "";
+    const current = bothSame || rem.analysis?.openai_compat || rem.writing?.openai_compat || "";
+    simpleModels = `
+      <div class="control-row ai-model-row">
+        <div class="field">
+          <label class="field-label" for="ai-model-active">Model id (all AI tasks)</label>
+          <input type="text" id="ai-model-active" data-compat-active-model value="${esc(current)}" placeholder="e.g. llama3.3" list="compat-models-active" autocomplete="off" spellcheck="false" aria-label="Model id for all AI tasks" />
+          <datalist id="compat-models-active">
+            ${(state.compatModels || []).map((id) => `<option value="${esc(id)}"></option>`).join("")}
+          </datalist>
+        </div>
+      </div>`;
+  } else if (active === "anthropic" && !pickerIntent) {
+    simpleModels = `
+      <div class="control-row ai-model-row">
+        ${modelControl("analysis", "Analysis")}
+        ${modelControl("writing", "Writing")}
+      </div>`;
+  }
+  const advanced = `
+      <details class="ai-advanced"${aiAdvancedOpen || derived === "per_task" ? " open" : ""}>
+        <summary data-action="toggle-ai-advanced">Advanced: route analysis and writing separately</summary>
+        <p class="settings-help">Analysis covers job scoring, pasted-URL parsing, criteria synthesis, and rule/title proposals; Writing covers outreach drafts, resume tailoring, and the AI-tell scrub. Each can run on its own provider and model.</p>
+        <div class="control-row">
+          ${axisControls("analysis", "Analysis")}
+        </div>
+        <div class="control-row">
+          ${axisControls("writing", "Writing")}
+        </div>
+      </details>`;
+  return `
+    <div class="section">
+      <div class="section-head"><h2 class="section-title">AI</h2></div>
+      <p class="settings-help">Optional — everything else works without it. Choose who runs the AI features (scoring, explanations, drafts, tailoring); both setups stay saved when you switch.</p>
+      ${picker}
+      ${intentNote}
+      ${pane}
+      ${simpleModels}
+      ${compatPending ? `<p class="settings-help">Enter the model id to apply (press Enter or click away to save).</p>` : ""}
+      ${
+        uncalibrated
+          ? `<p class="settings-help">Scoring is calibrated on ${esc(label(cfg.calibrated_scoring_model))}; on ${esc(analysisLabel)} scores may sit on a different scale. The default keeps the calibrated model.</p>`
+          : ""
+      }
+      ${advanced}
     </div>`;
 }
 
@@ -1116,13 +1440,26 @@ function systemTab() {
   const models = Object.entries(byModel);
   const spendTotal = models.reduce((sum, [, m]) => sum + (m.cost || 0), 0);
   const spendCalls = models.reduce((sum, [, m]) => sum + (m.calls || 0), 0);
+  // An unpriced entry (usage.py has no rate for that model id) understates the
+  // sum — mark the total as a floor instead of presenting it as exact. A
+  // `local` entry (loopback endpoint) is genuinely $0.00 and never taints it.
+  const hasUnpriced = models.some(([, m]) => m.unpriced);
+  // Plain model names: with per-task selection (the AI section) a role suffix
+  // like "(scoring)" can silently go stale, so the label no longer claims one.
   const MODEL_SPEND_LABELS = {
-    "claude-haiku-4-5": "Haiku (scoring)",
-    "claude-sonnet-4-6": "Sonnet (compose/tailor)",
-    "claude-sonnet-5": "Sonnet (compose/tailor)",
+    "claude-haiku-4-5": "Haiku 4.5",
+    "claude-sonnet-4-6": "Sonnet 4.6",
+    "claude-sonnet-5": "Sonnet 5",
+    "claude-opus-5": "Opus 5",
   };
+  // Compat ledger keys are namespaced openai-compat:<model> (aicfg.Binding);
+  // show the bare model plus where it ran.
+  const spendLabel = (id) =>
+    id.startsWith("openai-compat:")
+      ? `${id.slice("openai-compat:".length)} (endpoint)`
+      : MODEL_SPEND_LABELS[id] || id;
   return `
-    ${apiKeySection()}
+    ${aiSection()}
     ${personaSection()}
     ${voiceGuideSection()}
     <div class="section">
@@ -1140,8 +1477,8 @@ function systemTab() {
       }
       ${
         models.length
-          ? `<p class="settings-help">Model spend: <strong>$${spendTotal.toFixed(2)}</strong> over ${spendCalls} call${spendCalls === 1 ? "" : "s"} — ${models
-              .map(([id, m]) => `${esc(MODEL_SPEND_LABELS[id] || id)} $${(m.cost || 0).toFixed(2)}`)
+          ? `<p class="settings-help">Model spend: <strong>$${spendTotal.toFixed(2)}${hasUnpriced ? "+" : ""}</strong> over ${spendCalls} call${spendCalls === 1 ? "" : "s"} — ${models
+              .map(([id, m]) => `${esc(spendLabel(id))} ${m.unpriced ? "unpriced" : m.local ? "$0.00 local" : `$${(m.cost || 0).toFixed(2)}`}`)
               .join(", ")}.</p>`
           : ""
       }
@@ -1164,7 +1501,8 @@ function systemTab() {
       <p class="settings-help">Alerts when background work finishes — board refresh, rescore, tailoring.</p>
       <label class="form-check"><input type="checkbox" data-action="toggle-notify-sound"${soundEnabled() ? " checked" : ""}/> Play a sound in this browser (per device)</label>
       ${isMac ? `<label class="form-check"><input type="checkbox" data-action="toggle-notify-popups"${state.notifyPopups ? " checked" : ""}/> Show desktop notifications for refresh &amp; rescore (works with the browser closed)</label>` : ""}
-    </div>`;
+    </div>
+    ${scheduleSection()}`;
 }
 
 /* ---------- paint ---------- */
@@ -1480,12 +1818,13 @@ function manualPayload() {
   return out;
 }
 
-function parseRulesError(detail) {
-  const text = String(detail || "");
-  if (/location rule cannot be 'exclude'|location.*exclude/i.test(text)) {
-    return "A location rule can't be an exclusion — use “Always include”.";
-  }
-  return text || "Could not save inclusion rules.";
+/* The location-exclude 422 arrives as authored prose carrying [JSHQ-202]
+   (models.py), so there is nothing left to translate — the old regex over
+   the Pydantic-flattened message (error-audit P2) silently degraded whenever
+   the wording moved. Kept as a seam for future code-specific overrides via
+   errorCodes(error). */
+function parseRulesError(error) {
+  return (typeof error.detail === "string" && error.detail) || "Could not save inclusion rules.";
 }
 
 /* Persist rules + manual extras (one atomic backend call). Like Sourcing's chip
@@ -1498,7 +1837,7 @@ async function saveRules() {
     applyRulesResult(res);
     paint();
   } catch (error) {
-    rulesError = { message: error.status === 422 ? parseRulesError(error.detail) : error.detail || error.message };
+    rulesError = { message: error.status === 422 ? parseRulesError(error) : error.detail || error.message };
     await reloadRules(); // discard the optimistic change; paints with rulesError shown
   }
 }
@@ -1605,19 +1944,27 @@ function removeRuleTerm(id, term) {
   saveRules();
 }
 
-function parseCriteriaError(detail) {
-  const text = String(detail || "");
-  const field = CRIT_FIELDS.find((f) => text.includes(f)) || null;
-  const label = field ? CRIT_LABELS[field] : null;
-  let message = text || "Could not save fit criteria.";
-  if (label) {
-    if (/missing required key/.test(text)) message = `${label} is required.`;
-    else if (/must be int/.test(text)) message = `${label} must be a whole number.`;
-    else if (/must be list/.test(text)) message = `${label} must be a list.`;
-    else if (/must be dict/.test(text)) message = `${label} must be a set of key/value pairs.`;
-    else message = `${label}: ${text}`;
-  }
-  return { field, message };
+/* The failing field now rides in the 422's structured detail ({message,
+   field, kind} — see main.py's put_criteria), so the sentence is composed
+   from that instead of regex-matching the server prose (error-audit P1: the
+   old text.includes(field) parser silently degraded whenever a message was
+   reworded). kind names the failure; unknown kinds fall back to the coded
+   server message behind the field's label. */
+const CRIT_KIND_SENTENCES = {
+  missing: "is required.",
+  int: "must be a whole number.",
+  list: "must be a list.",
+  dict: "must be a set of key/value pairs.",
+};
+
+function parseCriteriaError(error) {
+  const info = error.info;
+  const field = info?.field && CRIT_LABELS[info.field] ? info.field : null;
+  const text = (typeof error.detail === "string" && error.detail) || "Could not save fit criteria.";
+  if (!field) return { field: null, message: text };
+  const label = CRIT_LABELS[field];
+  const sentence = CRIT_KIND_SENTENCES[info.kind];
+  return { field, message: sentence ? `${label} ${sentence}` : `${label}: ${text}` };
 }
 
 /* Resolve the typed center to coordinates via the offline place table and stage
@@ -1646,10 +1993,9 @@ async function resolveCenter(query) {
   } catch (error) {
     criteriaError = {
       field: "location_radius",
-      message:
-        error.status === 404
-          ? `Couldn't find "${q}" — try "Town, ST" (e.g. Madison, WI).`
-          : error.detail || error.message || "Could not resolve that place.",
+      // The geocode 404 now arrives as this same try-"Town, ST" sentence
+      // (coded) from the server — no local override needed.
+      message: error.detail || error.message || "Could not resolve that place.",
     };
     paint();
   }
@@ -1688,7 +2034,7 @@ async function saveCriteria() {
   } catch (error) {
     criteriaError =
       error.status === 422
-        ? parseCriteriaError(error.detail)
+        ? parseCriteriaError(error)
         : { field: null, message: error.detail || error.message };
     paint();
   }
@@ -1725,6 +2071,102 @@ async function toggleNotifyPopups(on) {
   }
 }
 
+/* PUT both axes and report the switch. The shared tail of every
+   provider-picker path. */
+async function putAxes(analysis, writing, providerLabel) {
+  try {
+    state.aiModels = await api.putAiModels(analysis, writing);
+    pickerIntent = null;
+    paint();
+    toast(`AI tasks now run on ${providerLabel}`);
+  } catch (error) {
+    paint();
+    toast(error.detail || error.message, { error: true });
+  }
+}
+
+/* The provider picker: switch every AI task to `provider`. Ready (Anthropic:
+   key configured; endpoint: URL configured + a model id remembered) switches
+   now, restoring each axis's remembered model for that provider; not-ready
+   records the intent, reveals the credential pane, and the pane's Save (or
+   typing the model id) completes the switch. Credentials for the OTHER
+   provider are never touched. */
+async function pickProvider(provider) {
+  // Declined-AI greys the endpoint segment out; this guard is the backstop.
+  if (
+    provider === "openai_compat" &&
+    state.apiKeyDeclined === true &&
+    !state.apiKey?.configured &&
+    !state.aiProviders?.configured
+  )
+    return;
+  if (provider === derivedProvider()) {
+    pickerIntent = null; // picking the current provider just clears any stale intent
+    paint();
+    return;
+  }
+  const remembered = state.aiModels?.remembered || {};
+  if (provider === "anthropic") {
+    if (!state.apiKey?.configured) {
+      pickerIntent = "anthropic";
+      paint();
+      return;
+    }
+    const axisChoice = (axis) => {
+      const model = remembered[axis]?.anthropic;
+      return model ? { provider: "anthropic", model } : null; // null = Default (the shipped tiers)
+    };
+    await putAxes(axisChoice("analysis"), axisChoice("writing"), "Anthropic");
+    return;
+  }
+  const modelFor = (axis) =>
+    remembered[axis]?.openai_compat || remembered[axis === "analysis" ? "writing" : "analysis"]?.openai_compat || null;
+  const am = modelFor("analysis");
+  const wm = modelFor("writing");
+  if (!state.aiProviders?.configured || !am || !wm) {
+    pickerIntent = "openai_compat";
+    paint();
+    return;
+  }
+  await putAxes(
+    { provider: "openai_compat", model: am },
+    { provider: "openai_compat", model: wm },
+    "your endpoint"
+  );
+}
+
+/* The simple compat model field: one id for all AI tasks (the per-axis split
+   lives under Advanced). Committed on change like the per-axis field. */
+async function saveActiveCompatModel(value) {
+  const model = (value || "").trim();
+  if (!model) return;
+  if (!state.aiProviders?.configured) {
+    toast("Save the endpoint URL first", { error: true });
+    return;
+  }
+  await putAxes(
+    { provider: "openai_compat", model },
+    { provider: "openai_compat", model },
+    "your endpoint"
+  );
+}
+
+async function saveAiModel(axis, value) {
+  const cfg = state.aiModels;
+  if (!cfg) return;
+  // A pending endpoint choice on the OTHER axis (provider picked, model id
+  // not typed yet) was never saved — send null for it, matching the server,
+  // instead of an empty model the PUT would 422.
+  const sendable = (v) => (v?.provider === "openai_compat" && !v.model ? null : v);
+  const next = { analysis: sendable(cfg.analysis), writing: sendable(cfg.writing), [axis]: value };
+  try {
+    state.aiModels = await api.putAiModels(next.analysis, next.writing);
+  } catch (error) {
+    toast(error.detail || error.message, { error: true });
+  }
+  paint(); // reflect the saved value (or snap a failed change back)
+}
+
 async function saveApiKey(value) {
   const key = (value || "").trim();
   if (!key) {
@@ -1737,6 +2179,8 @@ async function saveApiKey(value) {
     paint();
     refreshOnboardingTracker(); // a configured key completes the api_key step
     toast("API key saved");
+    // A pending provider switch was waiting on this key — complete it.
+    if (pickerIntent === "anthropic") pickProvider("anthropic");
   } catch (error) {
     toast(error.detail || error.message, { error: true });
   }
@@ -1772,10 +2216,152 @@ async function removeApiKey() {
   }
 }
 
+async function saveAiProviders() {
+  const urlEl = root.querySelector("[data-compat-url-input]");
+  const keyEl = root.querySelector("[data-compat-key-input]");
+  const baseUrl = (urlEl?.value || "").trim();
+  if (!baseUrl) {
+    toast("Enter the endpoint base URL first", { error: true });
+    return;
+  }
+  // Key three-ways (see AiProvidersIn): a typed key saves it; an empty field
+  // sends nothing, so re-saving the URL never wipes a stored key. Remove is
+  // the explicit clear.
+  const key = (keyEl?.value || "").trim();
+  try {
+    state.aiProviders = await api.putAiProviders(baseUrl, key || undefined);
+    state.aiProvidersTest = null; // a changed endpoint invalidates any prior Test
+    // A pending provider switch was waiting on this endpoint: the model-id
+    // field beside the pane completes it in the same Save when filled;
+    // left blank, the intent (and its required-note) stand until it is.
+    if (pickerIntent === "openai_compat") {
+      const modelEl = root.querySelector("[data-compat-active-model]");
+      const model = (modelEl?.value || "").trim();
+      if (model) {
+        refreshOnboardingTracker(); // a configured endpoint completes the api_key step
+        await putAxes(
+          { provider: "openai_compat", model },
+          { provider: "openai_compat", model },
+          "your endpoint"
+        );
+        return;
+      }
+    }
+    paint();
+    refreshOnboardingTracker(); // a configured endpoint completes the api_key step
+    toast("Endpoint saved");
+  } catch (error) {
+    toast(error.detail || error.message, { error: true });
+  }
+}
+
+async function testAiProviders() {
+  state.aiProvidersTest = "pending";
+  paint();
+  try {
+    const result = await api.testAiProviders(); // {ok, error, models}
+    state.aiProvidersTest = result;
+    if (result.ok) state.compatModels = result.models || []; // datalist food
+  } catch (error) {
+    // A 503 (not configured) or transport failure — surface, don't crash.
+    state.aiProvidersTest = { ok: false, error: error.detail || error.message };
+  }
+  paint();
+}
+
+async function removeAiProviders() {
+  const ok = await confirmModal({
+    title: "Remove endpoint?",
+    message: "The endpoint config and its key are removed. Tasks pointed at it fall back to an actionable notice until you reconfigure it or switch them to Anthropic.",
+    confirmLabel: "Remove",
+  });
+  if (!ok) return;
+  try {
+    state.aiProviders = await api.deleteAiProviders();
+    state.aiProvidersTest = null;
+    state.compatModels = [];
+    paint();
+    toast("Endpoint removed");
+  } catch (error) {
+    toast(error.detail || error.message, { error: true });
+  }
+}
+
+/* The current time-slot values, straight from the pickers' canonical hidden
+   inputs. Emptied slots drop; an all-empty job returns [] for the caller to
+   refuse. */
+function readScheduleSlots(job) {
+  return [...root.querySelectorAll(`[data-schedule-job="${job}"] input[type="hidden"]`)]
+    .map((el) => el.value)
+    .filter(Boolean);
+}
+
+/* Slot add/remove repaints, so the in-progress values must ride view state —
+   a repaint from the saved times would wipe unsaved picks. */
+function syncScheduleSlots() {
+  const raw = (job) => [...root.querySelectorAll(`[data-schedule-job="${job}"] input[type="hidden"]`)].map((el) => el.value);
+  scheduleSlots = { refresh: raw("refresh"), backup: raw("backup") };
+}
+
+/* Install/Apply is one verb on purpose: save the times AND make the OS match,
+   so a "saved but not applied" drift state can't exist. */
+async function installSchedule() {
+  const refresh = readScheduleSlots("refresh");
+  const backup = readScheduleSlots("backup");
+  if (!refresh.length || !backup.length) {
+    toast(`Pick at least one ${refresh.length ? "backup" : "refresh"} time, like 10:00`, { error: true });
+    return;
+  }
+  try {
+    await api.putSchedule(refresh, backup);
+    state.schedule = await api.installSchedule();
+    scheduleSlots = null; // back to mirroring the saved times
+    paint();
+    toast("Automatic schedule installed");
+  } catch (error) {
+    toast(error.detail || error.message, { error: true });
+    // The PUT may have landed even though install failed — re-read so the
+    // section shows the true stored/installed state.
+    try {
+      state.schedule = await api.getSchedule();
+      paint();
+    } catch {
+      /* keep what we have */
+    }
+  }
+}
+
+async function removeSchedule() {
+  const ok = await confirmModal({
+    title: "Remove schedule?",
+    message: "The scheduler entries are removed; nothing refreshes or backs up automatically until you install them again (or schedule jshq refresh and jshq backup yourself).",
+    confirmLabel: "Remove",
+  });
+  if (!ok) return;
+  try {
+    state.schedule = await api.uninstallSchedule();
+    scheduleSlots = null;
+    paint();
+    toast("Schedule removed");
+  } catch (error) {
+    toast(error.detail || error.message, { error: true });
+  }
+}
+
 async function savePersona(name, label) {
   const domain_label = (label || "").trim();
   if (!domain_label) {
     toast("Enter the role you're searching for", { error: true });
+    return;
+  }
+  // Mirror criteria.py's PERSONA_MAX_LEN (120) rail in the field's own terms —
+  // the raw 422 detail names persona['domain_label'], which nothing here is called.
+  if (domain_label.length > 120) {
+    toast("Keep the role under 120 characters — a short phrase, not a description.", { error: true });
+    return;
+  }
+  if ((name || "").trim().length > 120) {
+    toast("Keep the name under 120 characters.", { error: true });
     return;
   }
   try {
@@ -1810,8 +2396,16 @@ async function rescore() {
   } catch {
     /* estimate is best-effort — fall back to a generic confirm */
   }
+  // pricing (Tier 2): "local" = loopback endpoint, genuinely free; "unpriced" =
+  // remote endpoint we have no rates for — say unknown, never a fake $0.00.
+  const cost =
+    est?.pricing === "local"
+      ? "no API cost — local endpoint"
+      : est?.pricing === "unpriced"
+        ? "cost unknown — endpoint pricing not tracked"
+        : `~$${(est?.est_cost_usd ?? 0).toFixed(2)}`;
   const message = est
-    ? `Re-scores ~${est.to_score} of ${est.active} active jobs with AI (~$${(est.est_cost_usd ?? 0).toFixed(2)}). Takes a few minutes; runs in the background.`
+    ? `Re-scores ~${est.to_score} of ${est.active} active jobs with AI (${cost}). Takes a few minutes; runs in the background.`
     : "Re-scores every active job against the current criteria. Takes a few minutes; runs in the background.";
   const ok = await confirmModal({ title: "Rescore now?", message, confirmLabel: "Rescore" });
   if (!ok) return;
@@ -1846,6 +2440,7 @@ function stopRescorePoll() {
 
 function pollRescore() {
   stopRescorePoll();
+  let misses = 0;
   rescorePoll = setInterval(async () => {
     // Self-terminate if Settings is no longer mounted (the user navigated away
     // mid-rescore). app.js renders every view into the same #view element, so a
@@ -1859,10 +2454,19 @@ function pollRescore() {
     let status;
     try {
       status = await api.refreshStatus();
+      misses = 0;
     } catch {
+      // Tolerate blips; dying on the first error used to clear the progress
+      // bar with no message, which read as "finished" while the rescore kept
+      // running server-side. After three in a row, stop and say so.
+      if (++misses < 3) return;
       stopRescorePoll();
       state.rescoring = false;
       settleRescorePaint();
+      toast(
+        "Lost contact while rescoring — it continues on the server; revisit Settings to see the result.",
+        { error: true }
+      );
       return;
     }
     state.status = status; // keep progress (status.scoring_progress) fresh each tick
@@ -1924,14 +2528,16 @@ function updateRescoreProgress() {
 
 async function reloadSettings() {
   try {
-    const [reasons, sources, suggestions, scoringRules] = await Promise.all([
+    const [reasons, sources, linkedinTitles, suggestions, scoringRules] = await Promise.all([
       api.getSetting("dismiss_reasons"),
       api.getSetting("contact_sources"),
+      api.getSetting("linkedin_title_defaults"),
       api.getSuggestions(),
       api.getScoringRules(),
     ]);
     state.settings.dismiss_reasons = reasons.value || [];
     state.settings.contact_sources = sources.value || [];
+    state.settings.linkedin_title_defaults = linkedinTitles.value || [];
     applySuggestions(suggestions);
     state.scoringRules = scoringRules.rules || [];
     paint();
@@ -2040,6 +2646,38 @@ function onClick(event) {
     testApiKey();
   } else if (action === "remove-api-key") {
     removeApiKey();
+  } else if (action === "save-ai-providers") {
+    saveAiProviders();
+  } else if (action === "test-ai-providers") {
+    testAiProviders();
+  } else if (action === "remove-ai-providers") {
+    removeAiProviders();
+  } else if (action === "pick-provider") {
+    pickProvider(el.dataset.value);
+  } else if (action === "toggle-ai-advanced") {
+    // Track the native <details> toggle so a later repaint keeps the state.
+    aiAdvancedOpen = !aiAdvancedOpen;
+  } else if (action === "install-schedule") {
+    installSchedule();
+  } else if (action === "remove-schedule") {
+    removeSchedule();
+  } else if (action === "schedule-slot-add") {
+    syncScheduleSlots();
+    scheduleSlots[el.dataset.job].push("");
+    paint();
+  } else if (action === "schedule-slot-remove") {
+    syncScheduleSlots();
+    scheduleSlots[el.dataset.job].splice(Number(el.dataset.i), 1);
+    paint();
+  } else if (action === "linkedin-suggest") {
+    suggestLinkedinTitles();
+  } else if (action === "linkedin-suggest-add") {
+    // addTag saves the setting and toasts; the card leaves the review queue.
+    state.titleSuggestions = state.titleSuggestions.filter((s) => s.title !== el.dataset.key);
+    addTag("set", "linkedin_title_defaults", el.dataset.key);
+  } else if (action === "linkedin-suggest-ignore") {
+    state.titleSuggestions = state.titleSuggestions.filter((s) => s.title !== el.dataset.key);
+    paint();
   } else if (action === "save-persona") {
     const nameEl = root.querySelector("[data-persona-name]");
     const labelEl = root.querySelector("[data-persona-label]");
@@ -2062,9 +2700,39 @@ function onClick(event) {
   }
 }
 
+/* Commit-on-change surfaces (blur / Enter-blur). Bound to #view like onInput;
+   same settings-DOM guard so it no-ops on other views. */
+function onChange(event) {
+  if (!root || !root.querySelector(".settings-view")) return;
+  const t = event.target;
+  if (!t.matches) return;
+  if (t.matches("[data-ai-compat-model]")) {
+    const axis = t.dataset.aiCompatModel;
+    const model = (t.value || "").trim();
+    const saved = state.aiModels?.[axis];
+    if (model) {
+      saveAiModel(axis, { provider: "openai_compat", model });
+    } else if (saved?.provider === "openai_compat") {
+      // Emptied and left — an empty id can't be saved. A pending choice
+      // stays pending; a previously saved model snaps back on repaint.
+      paint();
+    }
+    return;
+  }
+  // The simple row's one-id-for-everything field (unified AI section).
+  if (t.matches("[data-compat-active-model]")) {
+    saveActiveCompatModel(t.value);
+  }
+}
+
 function onKeydown(event) {
   if (event.key !== "Enter") return;
   const t = event.target;
+  if (t.matches && (t.matches("[data-ai-compat-model]") || t.matches("[data-compat-active-model]"))) {
+    event.preventDefault();
+    t.blur(); // fires change → the commit path above
+    return;
+  }
   if (t.matches && t.matches("[data-rule-new-term]")) {
     event.preventDefault();
     addRuleFromComposer();
@@ -2096,6 +2764,30 @@ function onInput(event) {
   if (!root || !root.querySelector(".settings-view")) return;
   const t = event.target;
   if (!t.matches) return;
+  // AI model selects save on change — revert-on-failure like the toggles.
+  // The anthropic model select: "" = Default (null axis), an id = an explicit
+  // anthropic choice.
+  if (t.matches("[data-ai-model-axis]")) {
+    saveAiModel(t.dataset.aiModelAxis, t.value ? { provider: "anthropic", model: t.value } : null);
+    return;
+  }
+  // The provider select: back to Anthropic = the Default (null); to the
+  // endpoint = a pending local choice (no save until a model id is typed —
+  // the PUT requires one).
+  if (t.matches("[data-ai-provider-axis]")) {
+    const axis = t.dataset.aiProviderAxis;
+    if (t.value === "openai_compat") {
+      state.aiModels[axis] = { provider: "openai_compat", model: "" };
+      paint();
+      root.querySelector(`[data-ai-compat-model="${axis}"]`)?.focus();
+    } else {
+      saveAiModel(axis, null);
+    }
+    return;
+  }
+  // The compat model ids are free text: commit on change (blur/Enter), not
+  // on every keystroke — see onChange.
+  if (t.matches("[data-ai-compat-model]") || t.matches("[data-compat-active-model]")) return;
   // Composer selects react live: changing the verb to "exclude" disables the
   // location target (no location-exclude list) and snaps a stale pick back.
   if (t.matches("[data-rule-new-verb],[data-rule-new-target]")) {
@@ -2176,6 +2868,10 @@ export async function render(container) {
   criteriaError = null;
   rulesError = null;
   state.apiKeyTest = null; // a Test result is per-visit, not persisted across mounts
+  state.aiProvidersTest = null; // same contract for the endpoint Test
+  pickerIntent = null; // a half-finished provider switch does not survive a remount
+  aiAdvancedOpen = false;
+  scheduleSlots = null;
   pendingFocus = null;
   composer = { verb: "include", target: "title", term: "" };
   expandedAdvanced.clear();
@@ -2183,6 +2879,7 @@ export async function render(container) {
   container.onclick = onClick;
   container.onkeydown = onKeydown;
   container.oninput = onInput;
+  container.onchange = onChange;
   try {
     await load();
   } catch (error) {

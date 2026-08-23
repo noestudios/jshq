@@ -5202,6 +5202,64 @@ select {
 .settings-savehint {
   margin: 0;
 }
+/* One schedule time slot: the house time picker plus its remove ✕ read as a
+   single unit inside the flex savebar. Layout only — colors ride the tokens. */
+.schedule-slot {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* Credential entry (the Anthropic key, the endpoint URL and key) rides the
+   savebar layout but holds long secrets and URLs — the 130px tag-adder chip
+   (.settings-add-input's sizing) truncated them into guesswork. Size these
+   as real fields: field-scale type and padding, flexing to fill the row up
+   to a sane cap. */
+.settings-savebar .settings-cred-input {
+  font-size: var(--t-size-sm);
+  padding: var(--t-space-3) var(--t-space-5);
+  flex: 1 1 240px;
+  /* A floor, not just a basis: without it the row's buttons squeeze the
+     inputs back down instead of letting the wrap do its job. */
+  min-width: 240px;
+  max-width: 420px;
+  width: auto;
+}
+
+/* The unified AI section (and the wizard's provider chooser): the segment
+   and its dependent rows follow the section's paragraph rhythm — without
+   these the picker, credential pane, model rows, and Advanced disclosure
+   pack against each other. Layout only; colors ride the tokens. */
+.ai-provider-seg {
+  margin: var(--t-space-8) 0;
+}
+.wizard-provider-seg {
+  margin: var(--t-space-8) 0 var(--t-space-9);
+}
+.ai-model-row {
+  margin-top: var(--t-space-9);
+}
+/* Neither the decline checkbox nor the help line after it carries a top
+   margin, so they collide with the action row above (the same fix
+   .settings-savebar + .settings-help already encodes). */
+.settings-savebar + .form-check {
+  margin-top: var(--t-space-7);
+}
+.form-check + .settings-help,
+.form-check + .field-error {
+  margin-top: var(--t-space-7);
+}
+.ai-advanced {
+  margin-top: var(--t-space-10);
+}
+.ai-advanced > summary {
+  cursor: pointer;
+  font-size: var(--t-size-sm);
+  color: var(--t-ink-soft);
+}
+.ai-advanced[open] > summary {
+  margin-bottom: var(--t-space-8);
+}
 
 /* Theme segmented control (Settings › System › Appearance, P2). Inner radius
    is micro by the concentric rule: control 8 − 2px pad caps the segment at 6,

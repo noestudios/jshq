@@ -74,9 +74,12 @@ def test_tracker_carries_a_dismiss_control():
     # Reuses the existing close-button class from the a11y pass (24px tap target);
     # no new CSS class is invented here.
     assert "banner-dismiss" in js
-    # The click persists the acknowledgement and hides optimistically, best-effort.
+    # The click persists the acknowledgement and hides optimistically. A failed
+    # save is caught (never throws uncaught) — and since the Wave-3 F6 pass it
+    # reverts the pill and toasts instead of being silently swallowed
+    # (test_errors.py::test_tracker_dismiss_failure_reverts_and_says_so).
     assert 'api.putSetting("onboarding_tracker_dismissed", true)' in js
-    assert ".catch(() => {})" in js  # a failed save never throws uncaught
+    assert ".catch(() => {" in js  # a failed save never throws uncaught
 
 
 def test_dismiss_reuses_an_existing_close_button_class():
@@ -324,6 +327,20 @@ def test_build_readiness_demotes_a_rejected_key(monkeypatch):
     assert declined["done"] is True
 
 
+def test_build_readiness_counts_a_configured_endpoint_as_ai_decided(monkeypatch):
+    """A configured OpenAI-compatible endpoint turns AI on without any
+    Anthropic key, so it completes the api_key step — keyless, and even
+    with a stale rejected key lying around."""
+    from jshq import apikey
+
+    monkeypatch.setattr(apikey, "is_configured", lambda: False)
+    assert build_readiness(1)["steps"]["api_key"]["done"] is False
+    assert build_readiness(1, compat_configured=True)["steps"]["api_key"]["done"] is True
+    monkeypatch.setattr(apikey, "is_configured", lambda: True)
+    both = build_readiness(1, api_key_rejected=True, compat_configured=True)["steps"]["api_key"]
+    assert both["done"] is True and both["rejected"] is True
+
+
 def test_wizard_and_board_read_a_rejected_key_as_unusable():
     """#33: the "scoring/AI is on" copy keys on keyUsable (configured AND not
     rejected), not raw configured; the key step carries a standing 401 warning;
@@ -369,7 +386,8 @@ def test_wizard_key_step_offers_declining_a_key():
     assert "const fieldOff = shadowed || declined;" in js
     assert "const saveOff = shadowed || testing || declined;" in js
     # only offered when there is no key at all
-    assert "const noKey = !st?.configured;" in js
+    # only offered when there is no AI at all — no key AND no endpoint
+    assert "const noKey = !st?.configured && !s.aiProviders?.configured;" in js
 
 
 def test_profile_step_shows_the_criteria_load_banner():
@@ -512,6 +530,66 @@ def test_welcome_back_hub_points_at_the_uncounted_voice_guide():
 def test_wizard_seeds_linkedin_defaults_from_the_field():
     js = _read("js/views/welcome.js")
     assert 'putSetting("linkedin_title_defaults"' in js
+    # The seed is composed titles (band × field), not the raw field words: the
+    # derivation helper exists and feeds both writes.
+    assert "function deriveLinkedinTitles(" in js
+    assert "LINKEDIN_TITLE_TEMPLATES" in js
+    assert js.count("deriveLinkedinTitles(") >= 3  # definition + profile seed + filters re-derive
+    # Role checks find people to NETWORK with, so a lone chip is too sparse:
+    # the practitioner-noun heuristic unlocks real IC titles ("Staff backend
+    # engineer"), and per-field anchors (Head of …, the noun, the discipline)
+    # ride along regardless of band selection.
+    assert "function fieldNoun(" in js
+    assert "FIELD_NOUN_SUFFIXES" in js
+    assert "`Head of ${f}`" in js
+
+
+def test_wizard_never_prefills_the_default_domain_label():
+    # An old partial save (taxonomy written, persona never landed) left
+    # field.done true while the API served the NEUTRAL DEFAULT label — which
+    # the wizard then prefilled into the field input as if the user wrote it.
+    # Appending a real answer to that prose tripped the 120-char rail on a
+    # loop only a from-scratch restart escaped. The payload now flags the
+    # default and the wizard treats it as unset.
+    js = _read("js/views/welcome.js")
+    assert "persona.domain_label_is_default" in js
+    settings = _read("js/views/settings.js")
+    assert "p.domain_label_is_default" in settings
+
+
+def test_profile_step_validates_persona_length_before_any_write():
+    # criteria.py's PERSONA_MAX_LEN (120) 422s a long field answer — but only
+    # AFTER write_field already replaced the taxonomy with the paragraph, and
+    # the raw detail names persona['domain_label'], an internal nothing on the
+    # profile screen is called. The wizard must catch it up front, inline, in
+    # the input's own terms; Settings' persona editor carries the same guard.
+    js = _read("js/views/welcome.js")
+    save = js.split("async function saveProfile()")[1].split("\nasync function")[0]
+    assert "field.length > 120" in save
+    assert "s.errors.field" in save
+    # The inline error renders on the input itself (fieldError machinery).
+    assert 'fieldError("field")' in js
+    # And Continue routes the failure through focusFirstError like filters do.
+    dispatch = js.split('} else if (id === "profile")')[1].split("else if")[0]
+    assert "focusFirstError()" in dispatch
+    settings = _read("js/views/settings.js")
+    assert "domain_label.length > 120" in settings
+    # State commits AFTER the persona write, never before: a mid-save
+    # assignment once left a rejected value in s.domainLabel, where the
+    # empty-field fallback silently resent it — the user deleted the words
+    # from the input and the save still "thought they were there".
+    assert save.index("putPersona(") < save.index("s.domainLabel = domainLabel")
+
+
+def test_wizard_filters_step_upgrades_only_its_own_linkedin_seed():
+    # The bands are confirmed on the filters step, AFTER the profile step seeded
+    # with hydrated ones. The re-derive there must never overwrite a list the
+    # user hand-edited — only an empty setting or this session's own seed.
+    js = _read("js/views/welcome.js")
+    save = js.split("async function saveFilters()")[1].split("\nasync function")[0]
+    assert "deriveLinkedinTitles(" in save
+    assert "s.seededLinkedinTitles" in save
+    assert 'curJson === "[]"' in save
 
 
 def test_wishlist_continue_commits_a_typed_but_unadded_draft():
@@ -641,8 +719,11 @@ def test_privacy_and_honesty_copy_is_preserved():
     # The key step is honest that AI is optional and the rest works without it.
     assert "everything else still works" in js
     # A real, first-class decline option (not a dark-pattern nag to add a key).
+    # Renamed 2026-08-22: it declines AI as a whole, and greys out the
+    # endpoint path too while checked.
     assert 'data-action="toggle-decline-key"' in js
-    assert "I don't want to use an API key" in js
+    assert "I don't want to use AI" in js
+    assert 'aria-pressed="${compat}"${declinedAll ? " disabled" : ""}' in js
     # The schoolmarm "highly encouraged to spend the time" line was warmed (#27
     # nit) — guard against a regression back to it.
     assert "highly encouraged" not in js
@@ -677,3 +758,59 @@ def test_today_example_card_css_is_theme_token_based():
     block = css.split(".today-example {")[1].split(".suggestion-card {")[0]
     assert "#" not in block, "use theme tokens, not colour literals"
     assert "var(--t-bg-card)" in block
+
+
+def test_done_step_schedule_opt_in():
+    """The done step offers the pre-checked "keep this fresh automatically"
+    install (owner call 2026-08-22): rendered only when the OS scheduler is
+    supported and nothing is installed yet; the checkbox mirrors into state
+    without a repaint; Finish installs through the API and a failure toasts
+    rather than blocking the exit."""
+    js = _read("js/views/welcome.js")
+    assert "function scheduleOptInHtml()" in js
+    assert "${scheduleOptInHtml()}" in js  # actually rendered on the done step
+    opt = js.split("function scheduleOptInHtml()")[1].split("\nfunction ")[0]
+    assert "if (!sch || !sch.supported)" in opt
+    assert 'data-action="toggle-schedule"' in opt
+    assert 'action === "toggle-schedule"' in js
+    # Finish performs the opt-in install before the wizard exit, non-fatally.
+    finish = js.split("async function finish()")[1].split("\nasync function ")[0]
+    assert "api.installSchedule()" in finish
+    assert "toast(" in finish
+    # Pre-checked by default, and the status fetch is non-fatal at mount.
+    assert "installSchedule: true" in js
+    assert "api.getSchedule().catch(() => null)" in js
+
+
+def test_wizard_turn_on_ai_offers_both_providers():
+    """2026-08-22 (owner direction): the Turn-on-AI step carries a provider
+    choice — Anthropic key, or an OpenAI-compatible endpoint (URL + optional
+    key + model id) — instead of being Anthropic-only with the endpoint
+    discoverable nowhere but Settings."""
+    js = _read("js/views/welcome.js")
+    for action in ("ai-choice", "save-test-endpoint"):
+        assert f'data-action="{action}"' in js, f"missing control for {action}"
+        assert f'action === "{action}"' in js, f"missing handler for {action}"
+    assert "function compatPane()" in js
+    pane = js.split("function compatPane()")[1].split("\nfunction ")[0]
+    # The endpoint key is a password field; the model id feeds off the test's list.
+    assert 'type="password" data-field="compatKey"' in pane
+    assert 'data-field="compatUrl"' in pane and 'data-field="compatModel"' in pane
+    # Save & test: endpoint saved, BOTH axes pointed at it, probe informational.
+    store = js.split("async function storeEndpoint()")[1].split("\nasync function ")[0]
+    assert "api.putAiProviders(" in store
+    assert store.count('provider: "openai_compat"') == 2
+    stest = js.split("async function saveTestEndpoint()")[1].split("\nasync function ")[0]
+    assert "api.testAiProviders()" in stest and "syncOnboarding()" in stest
+
+
+def test_wizard_endpoint_counts_as_ai_on_and_continue_saves_it():
+    js = _read("js/views/welcome.js")
+    # keyUsable (the done step's "AI is on") widens to a configured endpoint.
+    usable = js.split("function keyUsable()")[1].split("\nfunction ")[0]
+    assert "s.aiProviders?.configured" in usable
+    # Continue on the endpoint pane saves typed config on the way through,
+    # but an UNCHANGED Continue must not re-write (and re-flatten) the axes.
+    key_branch = js.split('if (id === "key") {')[1].split('} else if (id === "profile")')[0]
+    assert "storeEndpoint()" in key_branch
+    assert "unchanged" in key_branch and "s.compatSavedModel" in key_branch

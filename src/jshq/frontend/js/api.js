@@ -20,6 +20,54 @@ export class ApiError extends Error {
 // tailor/compose call before the proxy does — both are safety nets, not the norm.
 const REQUEST_TIMEOUT_MS = 300_000;
 
+// Turn a non-ok Response into the ApiError to throw. One implementation for
+// both fetch paths (request() and the raw-body upload), so structured 409
+// details, validation strings, and the no-API-body defaults behave the same.
+async function responseError(response) {
+  let detail = null;
+  let info = null;
+  try {
+    const payload = await response.json();
+    if (payload.detail) {
+      if (typeof payload.detail === "string") {
+        detail = payload.detail;
+      } else if (Array.isArray(payload.detail)) {
+        // FastAPI validation errors
+        detail = payload.detail.map((e) => `${e.loc.join(".")}: ${e.msg}`).join("; ");
+      } else {
+        // a structured detail object (e.g. the already-tracked 409)
+        info = payload.detail;
+        detail = payload.detail.message ?? JSON.stringify(payload.detail);
+      }
+    }
+  } catch {
+    /* non-JSON error body (e.g. an Apache error page) */
+  }
+  if (detail === null) {
+    // 502/503/504 with no API-shaped body = Apache answered but the proxied
+    // request didn't complete — the backend is slow/busy (a long generation),
+    // restarting, or down. Don't assert "down"; a slow tailor/compose is the
+    // common case.
+    detail = [502, 503, 504].includes(response.status)
+      ? "The server didn't finish in time — it may be busy or restarting. Try again in a moment."
+      : `${response.status} ${response.statusText}`;
+  }
+  return new ApiError(response.status, detail, info);
+}
+
+// A 200 whose body isn't JSON (a proxy interstitial, a half-written response)
+// must not leak a raw SyntaxError into a toast.
+async function parseBody(response) {
+  try {
+    return await response.json();
+  } catch {
+    throw new ApiError(
+      response.status,
+      "The server sent an unexpected response — try again in a moment."
+    );
+  }
+}
+
 async function request(method, path, body) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
@@ -38,38 +86,8 @@ async function request(method, path, body) {
   } finally {
     clearTimeout(timer);
   }
-  if (!response.ok) {
-    let detail = null;
-    let info = null;
-    try {
-      const payload = await response.json();
-      if (payload.detail) {
-        if (typeof payload.detail === "string") {
-          detail = payload.detail;
-        } else if (Array.isArray(payload.detail)) {
-          // FastAPI validation errors
-          detail = payload.detail.map((e) => `${e.loc.join(".")}: ${e.msg}`).join("; ");
-        } else {
-          // a structured detail object (e.g. the already-tracked 409)
-          info = payload.detail;
-          detail = payload.detail.message ?? JSON.stringify(payload.detail);
-        }
-      }
-    } catch {
-      /* non-JSON error body (e.g. an Apache error page) */
-    }
-    if (detail === null) {
-      // 502/503/504 with no API-shaped body = Apache answered but the proxied
-      // request didn't complete — the backend is slow/busy (a long generation),
-      // restarting, or down. Don't assert "down"; a slow tailor/compose is the
-      // common case.
-      detail = [502, 503, 504].includes(response.status)
-        ? "The server didn't finish in time — it may be busy or restarting. Try again in a moment."
-        : `${response.status} ${response.statusText}`;
-    }
-    throw new ApiError(response.status, detail, info);
-  }
-  return response.json();
+  if (!response.ok) throw await responseError(response);
+  return parseBody(response);
 }
 
 export const api = {
@@ -95,6 +113,26 @@ export const api = {
   putApiKey: (key) => request("PUT", "/api/settings/api-key", { key }),
   deleteApiKey: () => request("DELETE", "/api/settings/api-key"),
   testApiKey: () => request("POST", "/api/settings/api-key/test"),
+  // Per-task AI selection (Providers Tiers 1-2): which provider+model runs the
+  // analysis tasks vs the writing tasks. Axis values are {provider, model}
+  // objects (or null for the shipped defaults); keys and URLs never ride back.
+  getAiModels: () => request("GET", "/api/settings/ai-models"),
+  putAiModels: (analysis, writing) =>
+    request("PUT", "/api/settings/ai-models", { analysis, writing }),
+  // The OpenAI-compatible endpoint (Tier 2): base URL + optional key. The key
+  // goes to <data dir>/.env and is sent only to that endpoint, never echoed.
+  getAiProviders: () => request("GET", "/api/settings/ai-providers"),
+  putAiProviders: (baseUrl, apiKey) =>
+    request("PUT", "/api/settings/ai-providers", { base_url: baseUrl, api_key: apiKey }),
+  deleteAiProviders: () => request("DELETE", "/api/settings/ai-providers"),
+  testAiProviders: () => request("POST", "/api/settings/ai-providers/test"),
+  // Scheduler control: stored refresh/backup times + live installed state.
+  // Install/uninstall write the OS scheduler entries (local only, no network).
+  getSchedule: () => request("GET", "/api/schedule"),
+  putSchedule: (refresh, backup) => request("PUT", "/api/schedule", { refresh, backup }),
+  installSchedule: () => request("POST", "/api/schedule/install"),
+  uninstallSchedule: () => request("POST", "/api/schedule/uninstall"),
+  suggestLinkedinTitles: () => request("POST", "/api/settings/linkedin-titles/suggest"),
   getSuggestions: () => request("GET", "/api/suggestions"),
   actOnSuggestion: (keyword, action) =>
     request("POST", "/api/suggestions/title-exclude", { keyword, action }),
@@ -186,26 +224,24 @@ export const api = {
   // Raw-body PUT (a File/Blob) — request() would JSON-encode it, so this one
   // drives fetch directly; errors funnel through the same ApiError shape.
   uploadApplicationFile: async (id, file) => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
     let response;
     try {
       response = await fetch(`/api/applications/${id}/files/${encodeURIComponent(file.name)}`, {
         method: "PUT",
         body: file,
+        signal: controller.signal,
       });
-    } catch {
-      throw new ApiError(0, "API unreachable — is the backend running?");
+    } catch (error) {
+      throw error.name === "AbortError"
+        ? new ApiError(0, "Upload timed out — the server may have restarted or stalled. Try again.")
+        : new ApiError(0, "API unreachable — is the backend running?");
+    } finally {
+      clearTimeout(timer);
     }
-    if (!response.ok) {
-      let detail = `${response.status} ${response.statusText}`;
-      try {
-        const payload = await response.json();
-        if (typeof payload.detail === "string") detail = payload.detail;
-      } catch {
-        /* non-JSON error body */
-      }
-      throw new ApiError(response.status, detail);
-    }
-    return response.json();
+    if (!response.ok) throw await responseError(response);
+    return parseBody(response);
   },
   listContacts: () => request("GET", "/api/contacts"),
   createContact: (body) => request("POST", "/api/contacts", body),

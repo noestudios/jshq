@@ -20,6 +20,7 @@
    navigations never flicker the pill. */
 
 import { api } from "../api.js";
+import { toast } from "./ui.js";
 
 const NODE_ID = "onboarding-tracker";
 let last = null; // last payload painted from
@@ -96,10 +97,15 @@ function paint() {
 
 /* "I'm set — hide this": drop the pill immediately (optimistic — repaint from a
    dismissed copy of the payload, which shouldShow() now hides) and persist the
-   acknowledgement best-effort. A failed save just leaves the pill back next
-   refresh; it must never throw uncaught. */
+   acknowledgement. A failed save used to be swallowed (F6): the pill vanished
+   for the session and quietly came back on the next one, which reads as the ✕
+   being broken. Now the failure reverts the pill and says why. */
 function dismiss() {
   if (last) last = { ...last, tracker_dismissed: true };
   paint();
-  api.putSetting("onboarding_tracker_dismissed", true).catch(() => {});
+  api.putSetting("onboarding_tracker_dismissed", true).catch(() => {
+    if (last) last = { ...last, tracker_dismissed: false };
+    paint();
+    toast("Couldn't save that — the setup pill stays for now. Try the ✕ again.", { error: true });
+  });
 }

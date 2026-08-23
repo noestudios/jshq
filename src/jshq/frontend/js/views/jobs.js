@@ -996,11 +996,16 @@ async function openDismissDialog() {
   // The list row has no JD; the cached detail (loaded on select) does. Only
   // offer the "propose a rule" opt-in when a description is actually available.
   const hasJd = !!state.detailCache.get(job.id)?.description_text;
-  if (!dismissReasons) {
+  let reasons = dismissReasons;
+  if (!reasons) {
     try {
-      dismissReasons = (await api.getSetting("dismiss_reasons")).value;
+      reasons = dismissReasons = (await api.getSetting("dismiss_reasons")).value;
     } catch {
-      dismissReasons = ["other"];
+      // Fall back for THIS modal only — don't cache it (F6: the silent
+      // ["other"] used to stick for the whole session), and say why the
+      // list shrank. The next dismiss retries the fetch.
+      reasons = ["other"];
+      toast("Couldn't load your dismissal reasons — offering a minimal list.", { error: true });
     }
   }
   openModal({
@@ -1009,7 +1014,7 @@ async function openDismissDialog() {
       <div class="form-field">
         <label for="dismiss-reason">Reason</label>
         <select id="dismiss-reason" name="reason">
-          ${dismissReasons.map((r) => `<option value="${esc(r)}">${esc(r)}</option>`).join("")}
+          ${reasons.map((r) => `<option value="${esc(r)}">${esc(r)}</option>`).join("")}
         </select>
       </div>
       <div class="form-field">
@@ -1101,6 +1106,7 @@ let pollTimer = null;
 
 function pollRefresh() {
   clearInterval(pollTimer);
+  let misses = 0;
   pollTimer = setInterval(async () => {
     // Self-terminate if Jobs is no longer mounted: app.js renders every view
     // into the same #view element, so this leaked poll's completion reload()
@@ -1113,6 +1119,7 @@ function pollRefresh() {
     }
     try {
       const s = await api.refreshStatus();
+      misses = 0;
       if (!s.running) {
         clearInterval(pollTimer);
         toast("Job boards refreshed");
@@ -1122,7 +1129,12 @@ function pollRefresh() {
         await reload();
       }
     } catch {
+      // Tolerate blips; dying silently on the first error meant the promised
+      // completion toast simply never arrived. After three in a row, say so —
+      // the refresh itself continues server-side.
+      if (++misses < 3) return;
       clearInterval(pollTimer);
+      toast("Lost contact with the refresh — reload to see its result.", { error: true });
     }
   }, 5000);
 }

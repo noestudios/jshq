@@ -34,7 +34,7 @@ per-fixture results against tests/fixtures/calibration/baseline.json (when it
 exists). Drift (exit 3) is decision-relevant change only: a model-id change,
 a missing fixture, a model_score move beyond DRIFT_SCORE_TOLERANCE, or a
 mgmt/leads flip between two DEFINITE values; flips involving `unclear`,
-flags churn and func_flag churn are soft-field variance and only inform. Run this after any model change (haiku.MODEL bump
+flags churn and func_flag churn are soft-field variance and only inform. Run this after any model change (default scoring-model bump
 or a provider-side shift); after a DELIBERATE rubric edit the baseline is
 expected to move — review the diff, then re-save with --save-baseline (refused
 while calibration is failing). Spend is appended to data/harness_spend.jsonl;
@@ -57,7 +57,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv  # noqa: E402
 
-from jshq import db, paths, usage  # noqa: E402
+from jshq import aicfg, db, paths, usage  # noqa: E402
 from jshq.ats.normalize import derive_level_band  # noqa: E402
 from jshq.scoring import boilerplate, derive, haiku  # noqa: E402
 from jshq.scoring.criteria import load_criteria  # noqa: E402
@@ -67,6 +67,13 @@ load_dotenv(REPO_ROOT / ".env")
 
 FIXTURES = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "calibration"
 BASELINE = FIXTURES / "baseline.json"
+
+# Deliberately the DEFAULT scoring model, never a per-install ai_models
+# override: this sentinel blesses the shipped baseline. Scoring on any other
+# model is uncalibrated by definition (Settings says so via
+# aicfg.CALIBRATED_SCORING_MODEL) and score_job falls back to this same
+# default when called without a model.
+MODEL = aicfg.DEFAULTS["scoring"]
 
 # |Δmodel_score| beyond this against the baseline is drift; within it is the
 # measured temp-0 run-to-run variance (±1–8 on real JDs, 2026-08-08) and only
@@ -420,15 +427,15 @@ async def run(save_baseline: bool = False, doc: Path | None = None) -> int:
     # Spend ledger first — the run cost real dollars whether or not it
     # calibrated, and the DB deliberately never sees harness spend.
     if calls:
-        cost = usage.cost_of(haiku.MODEL, acc)
+        cost = usage.cost_of(MODEL, acc)
         ledger = usage.append_harness_ledger(
-            "calibrate_scoring", haiku.MODEL, acc, calls=calls, cost=cost,
+            "calibrate_scoring", MODEL, acc, calls=calls, cost=cost,
             args=" ".join(sys.argv[1:]),
         )
         print(f"\ncost: ${cost:.4f} over {calls} calls — appended to {ledger}")
 
     current = {
-        "model": haiku.MODEL,
+        "model": MODEL,
         "saved_at": datetime.now().astimezone().isoformat(timespec="seconds"),
         "results": {r["entry"]["file"]: result_snapshot(r) for r in results},
     }
@@ -478,9 +485,9 @@ async def run(save_baseline: bool = False, doc: Path | None = None) -> int:
                 # was appended before this branch could know it needed more
                 # calls, and harness spend must never go unrecorded.
                 if calls2:
-                    cost2 = usage.cost_of(haiku.MODEL, acc2)
+                    cost2 = usage.cost_of(MODEL, acc2)
                     usage.append_harness_ledger(
-                        "calibrate_scoring", haiku.MODEL, acc2, calls=calls2,
+                        "calibrate_scoring", MODEL, acc2, calls=calls2,
                         cost=cost2, args="drift-re-read",
                     )
                     print(f"  re-read cost: ${cost2:.4f} over {calls2} calls")

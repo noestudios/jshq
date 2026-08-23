@@ -73,6 +73,20 @@ def resolve_data_dir() -> Path:
 DATA_DIR: Path = resolve_data_dir()  # frozen at first import — see module docstring
 
 
+def jshq_argv() -> list[str]:
+    """The absolute command that runs this install's `jshq` CLI — what a
+    scheduler entry must invoke (schedulers run without the shell PATH that
+    found `jshq` interactively). Prefers the console script; falls back to
+    the interpreter running jshq.cli as a module, which always exists."""
+    exe = shutil.which("jshq")
+    if exe:
+        return [str(Path(exe).resolve())]
+    argv0 = Path(sys.argv[0])
+    if argv0.name in ("jshq", "jshq.exe") and argv0.is_file():
+        return [str(argv0.resolve())]
+    return [sys.executable, "-m", "jshq.cli"]
+
+
 def seed_data_dir(data_dir: Path | None = None) -> list[Path]:
     """Mechanical first-run seeding: create the data dir and copy any absent
     SEED_FILES from the packaged defaults (via SEED_RENAMES when the source

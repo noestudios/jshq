@@ -54,6 +54,41 @@ def test_backup_dispatch(monkeypatch):
     assert calls == ["env", "backup"]
 
 
+def test_schedule_dispatch(monkeypatch):
+    calls = []
+    monkeypatch.setattr(cli, "_load_env", lambda: calls.append("env"))
+    monkeypatch.setattr(cli, "schedule_job", lambda args: calls.append(("schedule", args)) or 0)
+    assert cli.main(["schedule", "--install"]) == 0
+    assert calls[0] == "env"
+    kind, args = calls[1]
+    assert kind == "schedule" and args.install and not args.uninstall
+
+
+def test_schedule_flags(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(cli, "_load_env", lambda: None)
+    monkeypatch.setattr(cli, "schedule_job", lambda args: seen.update(vars(args)) or 0)
+    assert cli.main([
+        "schedule", "--install",
+        "--refresh-time", "08:00", "--refresh-time", "12:00", "--backup-time", "01:30",
+    ]) == 0
+    assert seen["refresh_time"] == ["08:00", "12:00"]
+    assert seen["backup_time"] == ["01:30"]
+
+
+def test_schedule_modes_are_mutually_exclusive(monkeypatch):
+    monkeypatch.setattr(cli, "_load_env", lambda: None)
+    with pytest.raises(SystemExit):
+        cli.main(["schedule", "--install", "--uninstall"])
+
+
+def test_schedule_exit_code_propagates(monkeypatch):
+    """An unsupported-OS or failed install must not exit 0 — never silent."""
+    monkeypatch.setattr(cli, "_load_env", lambda: None)
+    monkeypatch.setattr(cli, "schedule_job", lambda args: 1)
+    assert cli.main(["schedule", "--install"]) == 1
+
+
 def test_cli_module_has_no_import_time_jshq_imports():
     """jshq.paths freezes DATA_DIR at first import; cli must let the cwd .env
     load first. Guard the discipline, not just the current implementation."""

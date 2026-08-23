@@ -9,10 +9,9 @@ tests pass a fake and never hit the live API.
 
 import json
 
-from jshq import compose
+from jshq import aicfg, compose
 from jshq.scoring.criteria import persona_display_name
 
-MODEL = compose.MODEL
 MAX_TOKENS = 4096
 
 SCHEMA = {
@@ -90,18 +89,19 @@ def _parse(resp) -> dict:
     }
 
 
-async def refine(client, text: str) -> tuple[dict, list]:
-    """One Sonnet call (plus one retry on unusable output). Returns
+async def refine(client, text: str, model: str | None = None) -> tuple[dict, list]:
+    """One model call (plus one retry on unusable output). Returns
     ({score, tells_fixed, refined_text}, per-call usages). Raises RefineError."""
+    model = model or aicfg.DEFAULTS["refine"]
     system = build_system_prompt(compose.load_voice_guide(), compose.load_ai_tells())
     user = f"--- COPY TO REFINE ---\n{text.strip()}\n--- END COPY ---"
     last_exc: Exception | None = None
     usages: list = []
     for _ in range(2):
         resp = await client.messages.create(
-            model=MODEL,
+            model=model,
             max_tokens=MAX_TOKENS,
-            thinking=compose.THINKING,
+            **aicfg.thinking_kwargs(model),
             system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
             messages=[{"role": "user", "content": user}],
             output_config={"format": {"type": "json_schema", "schema": SCHEMA}},

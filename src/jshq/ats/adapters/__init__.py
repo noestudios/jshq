@@ -17,7 +17,10 @@ from . import (
     icims,
     lever,
     oracle_hcm,
+    recruitee,
+    rippling,
     smartrecruiters,
+    workable,
     workday,
 )
 
@@ -39,4 +42,7 @@ ADAPTERS = {
     p.CLEARCOMPANY: clearcompany.fetch,
     p.APPLE: apple.fetch,
     p.ATLASSIAN: atlassian.fetch,
+    p.RECRUITEE: recruitee.fetch,
+    p.WORKABLE: workable.fetch,
+    p.RIPPLING: rippling.fetch,
 }

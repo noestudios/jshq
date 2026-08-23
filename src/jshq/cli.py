@@ -6,6 +6,10 @@ point launchd / Task Scheduler / cron at it; partial failures are
 recorded in companies.ats_last_status, never raised to the scheduler.
 `jshq backup` takes one verified nightly backup the same way: always
 exit 0, failures land in backup.log and backup_status.json.
+`jshq schedule --install` writes those scheduler entries for you
+(launchd / crontab / schtasks); --status and --uninstall inspect and
+remove them. Never silent: unsupported systems get the manual
+instructions printed instead.
 
 Import discipline: nothing from jshq may be imported at module level.
 jshq.paths freezes DATA_DIR at first import, and the cwd .env loaded in
@@ -81,6 +85,69 @@ def backup_job() -> None:
         print(f"backup FAILED — {result['detail']} (see backup_status.json)")
 
 
+def schedule_job(args) -> int:
+    """Install, remove, or report the OS scheduler entries for `jshq refresh`
+    and `jshq backup`. Times resolve flag → settings row → defaults; a
+    flag-driven install persists its times to the settings row first, so the
+    row stays the one source of truth the Settings UI edits too."""
+    from jshq import db, schedule
+
+    db.init_db()  # the settings row must exist before we read it
+    conn = db.connect()
+    try:
+        try:
+            times = schedule.read_times(conn)
+            if args.refresh_time:
+                times["refresh"] = schedule.parse_times(args.refresh_time)
+            if args.backup_time:
+                times["backup"] = schedule.parse_times(args.backup_time)
+        except schedule.ScheduleError as exc:
+            print(str(exc))
+            return 1
+
+        if args.install:
+            if args.refresh_time or args.backup_time:
+                schedule.write_times(conn, times)
+            result = schedule.install(times)
+            if not result["supported"]:
+                print(result["manual"], end="")
+                return 1
+            if not result["ok"]:
+                print(f"install FAILED — {result['error']}")
+                return 1
+            print(
+                f"installed: refresh at {', '.join(times['refresh'])}; "
+                f"backup at {', '.join(times['backup'])}"
+            )
+            return 0
+
+        if args.uninstall:
+            result = schedule.uninstall()
+            if not result["supported"]:
+                print(result["manual"], end="")
+                return 1
+            if not result["ok"]:
+                print(f"uninstall FAILED — {result['error']}")
+                return 1
+            print("removed jshq scheduler entries")
+            return 0
+
+        # --status (the default)
+        st = schedule.status(conn)
+        if not st["supported"]:
+            print(st["manual"], end="")
+            return 0
+        print(f"scheduler: {st['platform']}")
+        for job in schedule.JOBS:
+            state = "installed" if st["installed"][job] else "not installed"
+            print(f"  {job}: {state} (times: {', '.join(st['times'][job])})")
+        print(f"  command: {' '.join(st['command'])}")
+        print(f"  data dir: {st['data_dir']}")
+        return 0
+    finally:
+        conn.close()
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="jshq",
@@ -93,6 +160,21 @@ def main(argv: list[str] | None = None) -> int:
     serve.add_argument("--reload", action="store_true", help="dev auto-reload")
     sub.add_parser("refresh", help="run the twice-daily ATS refresh once and exit")
     sub.add_parser("backup", help="run the nightly verified backup once and exit")
+    schedule = sub.add_parser(
+        "schedule", help="install, remove, or inspect the OS scheduler entries"
+    )
+    mode = schedule.add_mutually_exclusive_group()
+    mode.add_argument("--install", action="store_true", help="write and load the entries (idempotent)")
+    mode.add_argument("--uninstall", action="store_true", help="remove the entries")
+    mode.add_argument("--status", action="store_true", help="report installed state (the default)")
+    schedule.add_argument(
+        "--refresh-time", action="append", metavar="HH:MM",
+        help="refresh time, 24-hour; repeat for several runs a day (default 10:00 and 16:00)",
+    )
+    schedule.add_argument(
+        "--backup-time", action="append", metavar="HH:MM",
+        help="backup time, 24-hour; repeatable (default 02:00)",
+    )
     args = parser.parse_args(argv)
 
     _load_env()
@@ -102,6 +184,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "backup":
         backup_job()
         return 0
+    if args.command == "schedule":
+        return schedule_job(args)
 
     import uvicorn
 

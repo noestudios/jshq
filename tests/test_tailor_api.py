@@ -9,7 +9,7 @@ from test_compose import fake_client
 from test_resume_render import fake_content
 
 import jshq.main as main_module
-from jshq import compose, tailor
+from jshq import aicfg, compose, tailor
 from jshq.main import app, get_compose_client
 from jshq.resume import render
 from jshq.scoring.criteria import persona_display_name
@@ -130,7 +130,7 @@ def test_tailor_creates_pending_with_server_filled_old(tailor_client, seed_tailo
     application_id, _ = seed_tailorable()
     body = make_tailoring(client, application_id)
     assert body["status"] == "pending"
-    assert body["model"] == tailor.MODEL
+    assert body["model"] == aicfg.DEFAULTS["tailor"]
     assert body["warnings"] == []
     assert [c["id"] for c in body["change_plan"]] == ["summary", "win-1"]
     assert body["change_plan"][0]["old"].startswith("A summary")
@@ -151,7 +151,10 @@ def test_tailor_second_pending_is_409(tailor_client, seed_tailorable):
     first = make_tailoring(client, application_id)
     response = client.post(f"/api/applications/{application_id}/tailor", json={})
     assert response.status_code == 409
-    assert str(first["id"]) in response.json()["detail"]
+    # Structured 409: the pending id rides alongside the coded sentence.
+    detail = response.json()["detail"]
+    assert "[JSHQ-505]" in detail["message"]
+    assert detail["tailoring_id"] == first["id"]
 
 
 def test_tailor_requires_a_jd(tailor_client, seed_application):
@@ -214,7 +217,7 @@ def test_tailor_failure_still_records_usage(
     assert response.status_code == 502
     assert calls["n"] == 2  # both attempts ran
 
-    by_model = usage.read_usage_totals(db)["by_model"][tailor.MODEL]
+    by_model = usage.read_usage_totals(db)["by_model"][aicfg.DEFAULTS["tailor"]]
     assert by_model["output"] == 8192 * 2  # both failed attempts recorded
     assert by_model["cost"] > 0
 

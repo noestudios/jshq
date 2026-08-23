@@ -19,6 +19,7 @@ PRICES = {
     "claude-haiku-4-5": (1.00, 5.00),
     "claude-sonnet-4-6": (3.00, 15.00),
     "claude-sonnet-5": (3.00, 15.00),  # standard; see rate_for() for the intro window
+    "claude-opus-5": (5.00, 25.00),
 }
 
 # Claude Sonnet 5 launched on introductory pricing ($2/$10 per 1M) that reverts
@@ -115,9 +116,15 @@ def append_harness_ledger(
     return target
 
 
-def record_usage(conn: sqlite3.Connection, model: str, usage, *, calls: int = 1) -> None:
+def record_usage(
+    conn: sqlite3.Connection, model: str, usage, *, calls: int = 1, local: bool = False
+) -> None:
     """Accumulate one record (or a batch's summed token counts + its call count)
-    into usage_totals. No-op for None usage. Caller owns the commit."""
+    into usage_totals. No-op for None usage. Caller owns the commit.
+
+    `local` marks a loopback endpoint's spend (Tier 2): its $0.00 is TRUE,
+    not a silent understatement, so the entry is labeled `local` instead of
+    `unpriced` and the spend total stays exact."""
     if usage is None:
         return
     totals = read_usage_totals(conn) or {
@@ -135,6 +142,15 @@ def record_usage(conn: sqlite3.Connection, model: str, usage, *, calls: int = 1)
     by["cache_read"] += f["cache_read"]
     by["cache_write"] += f["cache_write"]
     by["cost"] = round(by["cost"] + cost_of(model, usage), 6)
+    if rate_for(model) is None:
+        if local:
+            # Loopback endpoint: $0.00 is the real cost, labeled as such.
+            by["local"] = True
+        else:
+            # A model PRICES doesn't know accumulates at $0.00 — say so instead
+            # of letting the spend line silently understate. The flag is sticky:
+            # any unpriced call taints the entry (its cost is wrong from then on).
+            by["unpriced"] = True
     conn.execute(
         "INSERT INTO settings (key, value) VALUES (?, ?) "
         "ON CONFLICT(key) DO UPDATE SET value = excluded.value",

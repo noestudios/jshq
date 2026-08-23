@@ -17,10 +17,11 @@ from uuid import uuid4
 
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
-from fastapi.responses import FileResponse
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from jshq import apikey, compose, jobparse, logos, onboarding, paths, refine, tailor, usage
+from jshq import aicfg, apikey, compose, errors, jobparse, linkedin_titles, logos, oaicompat, onboarding, paths, providers, refine, schedule, tailor, usage
 from jshq.ats import detect as ats_detect
 from jshq.ats import patterns as ats_patterns
 from jshq.ats import refresh as ats_refresh
@@ -30,6 +31,9 @@ from jshq.db import get_db, init_db
 from jshq.ics import build_calendar
 from jshq.models import (
     ActivityIn,
+    AiModelsIn,
+    AiProvidersIn,
+    AxisChoiceIn,
     ApiKeyIn,
     ApplicationIn,
     ApplicationUpdate,
@@ -51,6 +55,7 @@ from jshq.models import (
     ReminderIn,
     ReminderPatch,
     ReminderSuggestionActionIn,
+    ScheduleIn,
     ScoringRuleActionIn,
     SettingIn,
     SuggestionActionIn,
@@ -121,11 +126,107 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+
+# Request-validation 422s, humanized (error-audit F2). FastAPI's default body
+# is a Pydantic error array that the frontend flattens into toasts like
+# "body.tier1_params.comp_floor: Input should be a valid integer" — Pydantic
+# paths and Pydantic English at the user. This handler turns each error into
+# "<field label> <plain sentence>" and ships ONE string detail with the
+# [JSHQ-001] code; the raw (loc, msg, type) list rides alongside as "errors"
+# for API callers. Messages from our own @model/@field_validator raises
+# (type == "value_error") pass through verbatim: they are already authored
+# prose, and settings.js parseRulesError matches on that text (P2).
+_VALIDATION_SENTENCES = {
+    "missing": "is required",
+    "string_type": "must be text",
+    "int_type": "must be a whole number",
+    "int_parsing": "must be a whole number",
+    "int_from_float": "must be a whole number",
+    "float_type": "must be a number",
+    "float_parsing": "must be a number",
+    "bool_type": "must be yes or no",
+    "bool_parsing": "must be yes or no",
+    "list_type": "must be a list",
+    "dict_type": "must be a set of key/value pairs",
+    "literal_error": "isn't one of the allowed options",
+    "enum": "isn't one of the allowed options",
+    "string_pattern_mismatch": "isn't in the expected format",
+    "date_from_datetime_parsing": "must be a date like 2026-08-22",
+    "date_parsing": "must be a date like 2026-08-22",
+}
+
+# Field leaves whose generic "isn't in the expected format" needs a concrete
+# example (the reminder time regex used to surface AS a regex in the toast).
+_VALIDATION_HINTS = {"due_time": "use a 24-hour time like 09:30"}
+
+
+def _validation_sentence(err: dict) -> str:
+    kind = err.get("type", "")
+    msg = str(err.get("msg", ""))
+    if kind == "value_error":
+        # Our own validator text — already a user-facing sentence.
+        text = msg.removeprefix("Value error, ")
+        return text[:1].upper() + text[1:] if text else "Invalid value."
+    if kind == "json_invalid":
+        return "The request wasn't valid JSON."
+    # Drop the source marker and list indexes; the leaf field is the label.
+    loc = [
+        str(part)
+        for part in err.get("loc", ())
+        if part not in ("body", "query", "path") and not isinstance(part, int)
+    ]
+    leaf = loc[-1] if loc else ""
+    label = leaf.replace("_", " ").strip().capitalize() or "That value"
+    ctx = err.get("ctx") or {}
+    if kind in ("string_too_short", "too_short"):
+        n = ctx.get("min_length", 1)
+        phrase = "can't be empty" if n <= 1 else f"needs at least {n} characters"
+    elif kind == "string_too_long":
+        phrase = f"is too long (max {ctx.get('max_length', '?')} characters)"
+    elif kind == "greater_than_equal":
+        phrase = f"must be at least {ctx.get('ge')}"
+    elif kind == "less_than_equal":
+        phrase = f"must be at most {ctx.get('le')}"
+    elif kind == "greater_than":
+        phrase = f"must be more than {ctx.get('gt')}"
+    elif kind == "less_than":
+        phrase = f"must be less than {ctx.get('lt')}"
+    else:
+        # Unknown kinds keep Pydantic's sentence, but behind the field label
+        # instead of a body.* path.
+        phrase = _VALIDATION_SENTENCES.get(kind) or (msg[:1].lower() + msg[1:] if msg else "is invalid")
+    if leaf in _VALIDATION_HINTS and kind == "string_pattern_mismatch":
+        phrase += f" — {_VALIDATION_HINTS[leaf]}"
+    return f"{label} {phrase}."
+
+
+@app.exception_handler(RequestValidationError)
+async def _humanize_validation_error(request: Request, exc: RequestValidationError):
+    raw = exc.errors()
+    sentences: list[str] = []
+    for err in raw:
+        sentence = _validation_sentence(err)
+        if sentence not in sentences:
+            sentences.append(sentence)
+    text = " ".join(sentences)
+    # A passed-through validator sentence may already carry its own code
+    # (e.g. the location-exclude rule) — don't stack [JSHQ-001] on top.
+    detail = text if "[JSHQ-" in text else errors.fmt(errors.VALIDATION, text or None)
+    return JSONResponse(
+        status_code=422,
+        content={
+            "detail": detail,
+            # The machine-shaped view, minus ctx (whose values can be
+            # unserializable exception objects under Pydantic v2).
+            "errors": [
+                {"loc": list(e.get("loc", ())), "msg": str(e.get("msg", "")), "type": e.get("type", "")}
+                for e in raw
+            ],
+        },
+    )
+
 JSON_COMPANY_FIELDS = ("linkedin_company_ids", "linkedin_title_searches")
 
-# Seeded onto a new company when none are supplied (QA pass 2): a sensible base
-# set of LinkedIn role searches. Seed-on-create only — PUT never re-seeds, so
-# clearing all titles stays possible.
 # Strong refs to fire-and-forget onboarding tasks so they aren't GC'd mid-run
 # (asyncio only holds weak refs to tasks); discarded on completion.
 _onboard_tasks: set[asyncio.Task] = set()
@@ -239,7 +340,7 @@ def _check_contact_company(db: sqlite3.Connection, body: ContactIn) -> None:
         return
     row = db.execute("SELECT 1 FROM companies WHERE id = ?", (body.company_id,)).fetchone()
     if row is None:
-        raise HTTPException(status_code=400, detail=f"company {body.company_id} does not exist")
+        raise HTTPException(status_code=400, detail=errors.fmt(errors.COMPANY_GONE))
 
 
 @app.get("/api/health")
@@ -545,14 +646,25 @@ async def list_jobs(
 
 
 @app.post("/api/jobs/parse-url")
-async def parse_job_url_endpoint(body: JobParseUrlIn) -> dict:
+async def parse_job_url_endpoint(
+    body: JobParseUrlIn, db: sqlite3.Connection = Depends(get_db)
+) -> dict:
     """Best-effort prefill for the manual Add-job modal: fetch the pasted posting
     URL and extract its fields (schema.org JobPosting JSON-LD, else a Haiku pass
     over the page text). Never creates anything — the client prefills the modal
     and the user saves via POST /api/jobs. Returns nulls for fields it couldn't
     find; 422 for a bad/LinkedIn URL or an unreachable page."""
+    binding = aicfg.binding_for(db, "jobparse")
+    # Pass a ready provider's client in; otherwise None, and jobparse's own
+    # JSON-LD-only degradation carries (it also self-guards the keyless
+    # Anthropic default for direct callers).
+    client = (
+        providers.build_client(db, binding.provider, max_retries=4)
+        if providers.is_ready(db, binding.provider)
+        else None
+    )
     try:
-        return await jobparse.parse_job_url(body.url)
+        return await jobparse.parse_job_url(body.url, client=client, model=binding.model)
     except jobparse.JobParseError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
 
@@ -873,16 +985,21 @@ async def create_application(
     body: ApplicationIn, db: sqlite3.Connection = Depends(get_db)
 ) -> dict:
     if db.execute("SELECT 1 FROM jobs WHERE id = ?", (body.job_id,)).fetchone() is None:
-        raise HTTPException(status_code=400, detail=f"job {body.job_id} does not exist")
+        raise HTTPException(status_code=400, detail=errors.fmt(errors.JOB_GONE))
     existing = db.execute(
         "SELECT id FROM applications WHERE job_id = ?", (body.job_id,)
     ).fetchone()
     if existing is not None:
         # 409, not silent return: the frontend knows application_id from the
-        # job payload, so a duplicate POST means a stale cache or a bug.
+        # job payload, so a duplicate POST means a stale cache or a bug. The
+        # existing id rides the structured detail (like the add-job 409), not
+        # the sentence.
         raise HTTPException(
             status_code=409,
-            detail=f"application {existing['id']} already exists for this job",
+            detail={
+                "message": errors.fmt(errors.APPLICATION_EXISTS),
+                "application_id": existing["id"],
+            },
         )
     placeholders = ", ".join("?" for _ in APPLICATION_COLUMNS)
     cursor = db.execute(
@@ -1326,7 +1443,9 @@ async def test_api_key(db: sqlite3.Connection = Depends(get_db)) -> dict:
     (#33): only a pass or a 401 is recorded — a network/status failure says
     nothing about the key's validity, so it leaves any prior verdict alone."""
     if not apikey.is_configured():
-        raise HTTPException(status_code=503, detail="no API key configured")
+        # The same actionable line every other keyless 503 uses — this one
+        # said "no API key configured" while its siblings pointed at Settings.
+        raise HTTPException(status_code=503, detail=apikey.MISSING_MESSAGE)
     from anthropic import (
         APIConnectionError,
         APIStatusError,
@@ -1337,7 +1456,7 @@ async def test_api_key(db: sqlite3.Connection = Depends(get_db)) -> dict:
     client = AsyncAnthropic(max_retries=0)  # a probe: fail fast, don't stack backoff
     try:
         await client.messages.create(
-            model=jobparse.MODEL,  # the cheapest tier — this is a liveness ping
+            model=aicfg.PING_MODEL,  # the cheapest tier — this is a liveness ping
             max_tokens=1,
             messages=[{"role": "user", "content": "ping"}],
         )
@@ -1350,6 +1469,190 @@ async def test_api_key(db: sqlite3.Connection = Depends(get_db)) -> dict:
         return {"ok": False, "error": "Couldn't reach api.anthropic.com. Check your connection."}
     except APIStatusError as exc:
         return {"ok": False, "error": f"api.anthropic.com returned status {exc.status_code}."}
+
+
+# Per-task AI model selection (Providers Tier 1): one `ai_models` settings row,
+# two override axes. Dedicated routes rather than EDITABLE_SETTINGS because the
+# values are a closed vocabulary the generic list/bool shape check can't
+# express — and like api-key, these must precede the /api/settings/{key}
+# catch-all or "ai-models" matches it first.
+
+
+def _ai_models_payload(db: sqlite3.Connection) -> dict:
+    return {
+        **aicfg.read_overrides(db),
+        "remembered": aicfg.read_remembered(db),
+        "models": aicfg.MODELS,
+        "defaults": {
+            axis: {task: aicfg.DEFAULTS[task] for task in tasks}
+            for axis, tasks in aicfg.AXES.items()
+        },
+        "calibrated_scoring_model": aicfg.CALIBRATED_SCORING_MODEL,
+    }
+
+
+@app.get("/api/settings/ai-models")
+async def get_ai_models(db: sqlite3.Connection = Depends(get_db)) -> dict:
+    return _ai_models_payload(db)
+
+
+@app.put("/api/settings/ai-models")
+async def put_ai_models(
+    body: AiModelsIn, db: sqlite3.Connection = Depends(get_db)
+) -> dict:
+    overrides = {}
+    for axis in aicfg.AXES:
+        value = getattr(body, axis)
+        if isinstance(value, str):  # Tier-1 shorthand: a bare Anthropic id
+            value = AxisChoiceIn(provider="anthropic", model=value)
+        if value is None or (value.provider == "anthropic" and value.model is None):
+            overrides[axis] = None
+            continue
+        if value.provider == "anthropic":
+            if value.model not in aicfg.MODEL_IDS:
+                raise HTTPException(
+                    status_code=422, detail=errors.fmt(errors.MODEL_UNSUPPORTED)
+                )
+        else:  # openai_compat: free-text model id against the configured endpoint
+            model = (value.model or "").strip()
+            if not model or any(ch.isspace() for ch in model) or any(ch < " " for ch in model):
+                raise HTTPException(
+                    status_code=422, detail=errors.fmt(errors.COMPAT_MODEL_REQUIRED)
+                )
+            if providers.compat_base_url(db) is None:
+                raise HTTPException(
+                    status_code=422, detail=errors.fmt(errors.PROVIDER_NOT_CONFIGURED)
+                )
+            value = AxisChoiceIn(provider="openai_compat", model=model)
+        overrides[axis] = {"provider": value.provider, "model": value.model}
+    # write_overrides, not _set_setting: the row also carries the provider
+    # picker's switch-back memory, which every axis write must update.
+    aicfg.write_overrides(db, overrides)
+    return _ai_models_payload(db)
+
+
+# The OpenAI-compatible endpoint (Providers Tier 2): base URL in the
+# `ai_providers` settings row (configuration-as-disclosure), key in
+# DATA_DIR/.env beside the Anthropic one (a secret; never in the DB, never in
+# a response). Like api-key and ai-models, these must precede the
+# /api/settings/{key} catch-all below.
+
+
+@app.get("/api/settings/ai-providers")
+async def get_ai_providers(db: sqlite3.Connection = Depends(get_db)) -> dict:
+    return providers.compat_status(db)
+
+
+@app.put("/api/settings/ai-providers")
+async def put_ai_providers(
+    body: AiProvidersIn, db: sqlite3.Connection = Depends(get_db)
+) -> dict:
+    try:
+        base_url = providers.validate_base_url(body.base_url)
+    except ValueError:
+        raise HTTPException(
+            status_code=422, detail=errors.fmt(errors.PROVIDER_URL_INVALID)
+        )
+    if body.api_key is not None:
+        if body.api_key == "":
+            apikey.clear_env_value(providers.COMPAT_ENV_KEY)
+        else:
+            try:
+                apikey.write_env_value(providers.COMPAT_ENV_KEY, body.api_key)
+            except ValueError as exc:  # whitespace/control chars
+                raise HTTPException(status_code=422, detail=str(exc))
+    _set_setting(db, providers.SETTING_KEY, {"openai_compat": {"base_url": base_url}})
+    return providers.compat_status(db)
+
+
+@app.delete("/api/settings/ai-providers")
+async def delete_ai_providers(db: sqlite3.Connection = Depends(get_db)) -> dict:
+    """Remove the endpoint config and its key. Axes still pointing at the
+    compat provider are deliberately left in place — the runtime guards (503,
+    scoring skip) carry that drift with an actionable message, and re-adding
+    the endpoint restores them untouched."""
+    _clear_setting(db, providers.SETTING_KEY)
+    apikey.clear_env_value(providers.COMPAT_ENV_KEY)
+    return providers.compat_status(db)
+
+
+@app.post("/api/settings/ai-providers/test")
+async def test_ai_providers(db: sqlite3.Connection = Depends(get_db)) -> dict:
+    """Explicit, user-initiated endpoint check: one zero-token GET /models to
+    the configured base URL (nothing else is ever contacted). Never automatic,
+    never on page load — the button in Settings is the only caller. 503 before
+    any network when no endpoint is configured (the only path the endpointless
+    test suite reaches). The model list rides back to feed the free-text model
+    field's suggestions."""
+    base_url = providers.compat_base_url(db)
+    if base_url is None:
+        raise HTTPException(status_code=503, detail=providers.MISSING_ENDPOINT_MESSAGE)
+    try:
+        result = await oaicompat.probe(base_url, os.environ.get(providers.COMPAT_ENV_KEY))
+    except oaicompat.AuthenticationError:
+        return {"ok": False, "error": "The key was rejected (401). Check it and try again.", "models": []}
+    except oaicompat.APIConnectionError:
+        return {"ok": False, "error": f"Couldn't reach {base_url}. Check the URL and that the server is running.", "models": []}
+    except oaicompat.APIStatusError as exc:
+        return {"ok": False, "error": f"The endpoint returned status {exc.status_code}.", "models": []}
+    return {"ok": True, "error": None, "models": result["models"]}
+
+
+# The scheduler control (see jshq.schedule): times live in the `schedule`
+# settings row — the one source of truth the CLI reads too — while
+# installed-ness is always read live from the OS, never stored. /api/schedule
+# doesn't collide with the /api/settings/{key} catch-all, but it lives here
+# with the other bespoke settings routes on purpose.
+
+
+@app.get("/api/schedule")
+async def get_schedule(db: sqlite3.Connection = Depends(get_db)) -> dict:
+    return schedule.status(db)
+
+
+@app.put("/api/schedule")
+async def put_schedule(
+    body: ScheduleIn, db: sqlite3.Connection = Depends(get_db)
+) -> dict:
+    try:
+        times = {
+            "refresh": schedule.parse_times(body.refresh),
+            "backup": schedule.parse_times(body.backup),
+        }
+    except schedule.ScheduleError as exc:
+        raise HTTPException(
+            status_code=422, detail=errors.fmt(errors.SCHEDULE_TIME_INVALID, str(exc))
+        )
+    schedule.write_times(db, times)
+    return schedule.status(db)
+
+
+@app.post("/api/schedule/install")
+async def install_schedule(db: sqlite3.Connection = Depends(get_db)) -> dict:
+    """Write and load the OS scheduler entries for the stored times.
+    Idempotent — a re-install replaces, never duplicates."""
+    result = schedule.install(schedule.read_times(db))
+    if not result["supported"]:
+        raise HTTPException(status_code=422, detail=errors.fmt(errors.SCHEDULE_UNSUPPORTED))
+    if not result["ok"]:
+        raise HTTPException(
+            status_code=500,
+            detail=errors.fmt(errors.SCHEDULE_APPLY_FAILED, result["error"]),
+        )
+    return schedule.status(db)
+
+
+@app.post("/api/schedule/uninstall")
+async def uninstall_schedule(db: sqlite3.Connection = Depends(get_db)) -> dict:
+    result = schedule.uninstall()
+    if not result["supported"]:
+        raise HTTPException(status_code=422, detail=errors.fmt(errors.SCHEDULE_UNSUPPORTED))
+    if not result["ok"]:
+        raise HTTPException(
+            status_code=500,
+            detail=errors.fmt(errors.SCHEDULE_APPLY_FAILED, result["error"]),
+        )
+    return schedule.status(db)
 
 
 @app.get("/api/settings/{key}")
@@ -1486,10 +1789,7 @@ async def put_voice_guide(body: VoiceGuideIn) -> dict:
     """Write the voice guide to DATA_DIR. No structural validation — it is prose;
     only a byte cap. An empty guide is legal (prompts fall back to base framing)."""
     if len(body.markdown.encode("utf-8")) > VOICE_GUIDE_MAX_BYTES:
-        raise HTTPException(
-            status_code=422,
-            detail=f"voice guide is too large (max {VOICE_GUIDE_MAX_BYTES} bytes)",
-        )
+        raise HTTPException(status_code=422, detail=errors.fmt(errors.VOICE_GUIDE_TOO_LARGE))
     compose.save_voice_guide(body.markdown)
     return {"markdown": compose.load_voice_guide()}
 
@@ -1561,15 +1861,37 @@ async def put_criteria(body: CriteriaIn) -> dict:
             size_scale=True,
         )
     except CriteriaError as exc:
-        raise HTTPException(status_code=422, detail=str(exc))
+        # Structured for the Settings editor: field/kind name the failing
+        # tier1 input and how it failed, so the client anchors an inline
+        # error without parsing the message prose (error-audit P1). Both are
+        # None for doc-shape errors outside the editor's fields.
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "message": errors.fmt(errors.CRITERIA_INVALID, str(exc)),
+                "field": exc.field,
+                "kind": exc.kind,
+            },
+        )
     params, tier2 = read_editable()
     return {"tier1_params": params, "tier2_criteria": tier2}
 
 
 def _persona_payload(loaded) -> dict:
     """The editor's view of the persona: the RAW display_name (None when the doc
-    names nobody, so the field renders blank) and the effective domain_label."""
-    return {"display_name": loaded.persona.get("display_name"), "domain_label": loaded.domain_label}
+    names nobody, so the field renders blank) and the effective domain_label.
+
+    domain_label_is_default marks the neutral fallback ("the roles you are
+    searching for") — served when the doc has no persona block, and written
+    literally by a name-only save. It is placeholder prose, not user content:
+    editors must render it as an empty input, never as a value. Prefilling it
+    once concatenated it with a user's real answer and 422'd the length rail."""
+    label = loaded.domain_label
+    return {
+        "display_name": loaded.persona.get("display_name"),
+        "domain_label": label,
+        "domain_label_is_default": label == criteria.DEFAULT_PERSONA["domain_label"],
+    }
 
 
 @app.get("/api/scoring/persona")
@@ -1580,7 +1902,11 @@ async def get_persona() -> dict:
     try:
         return _persona_payload(load_criteria())
     except CriteriaError:
-        return {"display_name": None, "domain_label": criteria.DEFAULT_PERSONA["domain_label"]}
+        return {
+            "display_name": None,
+            "domain_label": criteria.DEFAULT_PERSONA["domain_label"],
+            "domain_label_is_default": True,
+        }
 
 
 @app.put("/api/scoring/persona")
@@ -1592,7 +1918,7 @@ async def put_persona(body: PersonaIn) -> dict:
     try:
         loaded = criteria.write_persona(name, body.domain_label.strip())
     except CriteriaError as exc:
-        raise HTTPException(status_code=422, detail=str(exc))
+        raise HTTPException(status_code=422, detail=errors.fmt(errors.PERSONA_INVALID, str(exc)))
     return _persona_payload(loaded)
 
 
@@ -1606,7 +1932,9 @@ async def put_discipline(body: DisciplineIn) -> dict:
     try:
         loaded = criteria.write_field(body.field.strip())
     except CriteriaError as exc:
-        raise HTTPException(status_code=422, detail=str(exc))
+        raise HTTPException(
+            status_code=422, detail=errors.fmt(errors.DISCIPLINE_INVALID, str(exc))
+        )
     return {"in_band_disciplines": loaded.taxonomy["in_band_disciplines"]}
 
 
@@ -1642,7 +1970,10 @@ def _onboarding_payload(db: sqlite3.Connection) -> dict:
     # (#33). Only meaningful while a key is actually configured.
     api_key_rejected = _setting_value(db, "api_key_test_verdict") == "rejected" and apikey.is_configured()
     readiness = onboarding.build_readiness(
-        _company_count(db), api_key_declined=declined, api_key_rejected=api_key_rejected
+        _company_count(db),
+        api_key_declined=declined,
+        api_key_rejected=api_key_rejected,
+        compat_configured=providers.compat_base_url(db) is not None,
     )
     state = _onboarding_state(db)
     # "I'm set — hide this" on the tracker pill: an acknowledgement, not a readiness
@@ -1766,7 +2097,13 @@ async def geocode_place(q: str) -> dict:
     town). No DB, no network."""
     hit = geo.resolve(q)
     if hit is None:
-        raise HTTPException(status_code=404, detail=f"could not resolve {q!r} to a US place")
+        raise HTTPException(
+            status_code=404,
+            detail=errors.fmt(
+                errors.GEOCODE_NO_MATCH,
+                f'Couldn\'t find "{q}" — try "Town, ST" (e.g. Madison, WI).',
+            ),
+        )
     return hit
 
 
@@ -1796,7 +2133,7 @@ async def put_inclusion_rules(
             body.manual.model_dump(),
         )
     except CriteriaError as exc:
-        raise HTTPException(status_code=422, detail=str(exc))
+        raise HTTPException(status_code=422, detail=errors.fmt(errors.CRITERIA_INVALID, str(exc)))
 
 
 @app.post("/api/scoring/rescore")
@@ -1820,11 +2157,21 @@ async def rescore_estimate(db: sqlite3.Connection = Depends(get_db)) -> dict:
     try:
         est = estimate_rescore(db)
     except CriteriaError as exc:
-        raise HTTPException(status_code=422, detail=str(exc))
+        raise HTTPException(status_code=422, detail=errors.fmt(errors.CRITERIA_INVALID, str(exc)))
+    binding = aicfg.binding_for(db, "scoring")
     totals = usage.read_usage_totals(db)
-    hk = (totals or {}).get("by_model", {}).get(haiku.MODEL)
+    hk = (totals or {}).get("by_model", {}).get(binding.ledger_key)
+    if binding.local:
+        # A loopback endpoint's calls genuinely cost $0 — say "local", not $0.00
+        # of API spend.
+        return {**est, "est_cost_usd": 0.0, "pricing": "local"}
+    if binding.provider == "openai_compat":
+        # Remote endpoint: nothing in PRICES covers it, so any observed cost
+        # is $0-by-ignorance and the Haiku-shaped default would be a
+        # fabricated number — say "unknown" instead of either.
+        return {**est, "est_cost_usd": None, "pricing": "unpriced"}
     avg = (hk["cost"] / hk["calls"]) if hk and hk.get("calls") else usage.DEFAULT_COST_PER_JOB
-    return {**est, "est_cost_usd": round(est["to_score"] * avg, 4)}
+    return {**est, "est_cost_usd": round(est["to_score"] * avg, 4), "pricing": "estimated"}
 
 
 @app.get("/api/suggestions")
@@ -1874,7 +2221,7 @@ async def act_on_reminder_suggestion(
     if body.action == "accept":
         match = next((s for s in _reminder_suggestions(db) if s["key"] == body.key), None)
         if match is None:
-            raise HTTPException(status_code=404, detail="suggestion not found (stale?)")
+            raise HTTPException(status_code=404, detail=errors.fmt(errors.SUGGESTION_STALE))
         cursor = db.execute(
             """INSERT INTO reminders (title, type, entity_type, entity_id, due_date,
                                       ics_uid, created_at, updated_at)
@@ -1913,7 +2260,7 @@ async def act_on_scoring_proposal(
     proposals = learned.read_proposals(db)
     match = next((p for p in proposals if p.get("id") == body.id), None)
     if match is None:
-        raise HTTPException(status_code=404, detail="proposal not found (stale?)")
+        raise HTTPException(status_code=404, detail=errors.fmt(errors.PROPOSAL_STALE))
     remaining = [p for p in proposals if p.get("id") != body.id]
     if body.action == "accept":
         rules = learned.read_scoring_rules(db)
@@ -2021,7 +2368,12 @@ def _check_entity(db: sqlite3.Connection, entity_type: str | None, entity_id: in
         return
     table = ENTITY_TABLES[entity_type]
     if db.execute(f"SELECT 1 FROM {table} WHERE id = ?", (entity_id,)).fetchone() is None:
-        raise HTTPException(status_code=400, detail=f"{entity_type} {entity_id} does not exist")
+        raise HTTPException(
+            status_code=400,
+            detail=errors.fmt(
+                errors.ENTITY_GONE, f"That {entity_type} no longer exists — refresh and try again."
+            ),
+        )
 
 
 @app.post("/api/activities", status_code=201)
@@ -2068,17 +2420,33 @@ async def list_activities(
 # feed future context; a regenerated-away draft is still taste signal.
 
 
-async def get_compose_client():
-    """503 before any work when the key is absent; lazy import so the app
-    runs without the anthropic package (mirrors scoring.run_scoring)."""
-    if not apikey.is_configured():
-        raise HTTPException(status_code=503, detail=apikey.MISSING_MESSAGE)
-    from anthropic import AsyncAnthropic
+def _interactive_client(db: sqlite3.Connection, task: str):
+    """The client for one interactive AI endpoint, resolved through the
+    task's axis binding (Tier 2: either provider). 503 with the provider's
+    actionable message before any work when it isn't ready; construction is
+    lazy inside providers.build_client so the app runs without the anthropic
+    package (mirrors scoring.run_scoring).
 
-    # 2 retries (3 attempts) bounds worst-case latency: the SDK's exponential
-    # backoff on a 429/529 storm could otherwise stack past the 300s proxy
-    # budget on a single interactive tailor/compose call.
-    return AsyncAnthropic(max_retries=2)
+    2 retries (3 attempts) bounds worst-case latency: exponential backoff on
+    a 429/529 storm could otherwise stack past the 300s proxy budget on a
+    single interactive tailor/compose call."""
+    binding = aicfg.binding_for(db, task)
+    if not providers.is_ready(db, binding.provider):
+        raise HTTPException(status_code=503, detail=providers.missing_message(binding.provider))
+    return providers.build_client(db, binding.provider, max_retries=2)
+
+
+async def get_compose_client(db: sqlite3.Connection = Depends(get_db)):
+    """The writing axis's client (compose/refine/tailor). The name predates
+    Tier 2; it survives because seven test files override it by identity."""
+    return _interactive_client(db, "compose")
+
+
+async def get_analysis_client(db: sqlite3.Connection = Depends(get_db)):
+    """The analysis axis's client (rule proposals, title suggestions,
+    synthesis) — split from get_compose_client so per-axis provider choice
+    reaches every endpoint, not just the writing ones."""
+    return _interactive_client(db, "learned")
 
 
 @app.post("/api/compose")
@@ -2089,28 +2457,37 @@ async def compose_draft(
 ) -> dict:
     context = compose.build_entity_context(db, body.entity_type, body.entity_id)
     if context is None:
-        raise HTTPException(status_code=404, detail=f"{body.entity_type} not found")
+        raise HTTPException(
+            status_code=404,
+            detail=errors.fmt(
+                errors.ENTITY_GONE,
+                f"That {body.entity_type} no longer exists — refresh and try again.",
+            ),
+        )
     system = compose.build_system_prompt(
         compose.load_voice_guide(), compose.ai_tells_prompt_block()
     )
     user = compose.build_user_message(body.intent, context, body.instructions, body.question)
+    binding = aicfg.binding_for(db, "compose")
+    model = binding.model
     try:
-        draft, usages = await compose.generate(client, system, user)
+        draft, usages = await compose.generate(client, system, user, model)
     # Deliberately broad: anthropic is lazily imported (the app must run
     # without the package), so its typed exceptions can't be caught here.
     except Exception as exc:
         for u in usage.usages_of(exc):
-            usage.record_usage(db, compose.MODEL, u)
+            usage.record_usage(db, binding.ledger_key, u, local=binding.local)
         db.commit()
-        raise HTTPException(status_code=502, detail=f"draft generation failed: {exc}")
+        _applog.warning("compose draft generation failed: %s", exc)
+        raise errors.http_error(502, errors.COMPOSE_FAILED)
     for u in usages:
-        usage.record_usage(db, compose.MODEL, u)
+        usage.record_usage(db, binding.ledger_key, u, local=binding.local)
     content = json.dumps({
         "intent": body.intent,
         "instructions": body.instructions or None,
         "question": body.question or None,
         "draft": draft,
-        "model": compose.MODEL,
+        "model": model,
     })
     cursor = db.execute(
         """INSERT INTO activities (entity_type, entity_id, date, type, content)
@@ -2118,7 +2495,7 @@ async def compose_draft(
         (body.entity_type, body.entity_id, date.today().isoformat(), content),
     )
     db.commit()
-    return {"draft": draft, "model": compose.MODEL, "activity_id": cursor.lastrowid}
+    return {"draft": draft, "model": model, "activity_id": cursor.lastrowid}
 
 
 @app.post("/api/refine-tells")
@@ -2130,16 +2507,19 @@ async def refine_tells(
     """Opt-in AI-tell scrub of a draft / cover letter. One Sonnet call; returns
     {score, tells_fixed, refined_text}. Records spend; nothing is persisted here
     (the caller drops refined_text back into its editable field)."""
+    binding = aicfg.binding_for(db, "refine")
+    model = binding.model
     try:
-        result, usages = await refine.refine(client, body.text)
+        result, usages = await refine.refine(client, body.text, model)
     # Broad for the same reason as compose: anthropic is lazily imported.
     except Exception as exc:
         for u in usage.usages_of(exc):
-            usage.record_usage(db, refine.MODEL, u)
+            usage.record_usage(db, binding.ledger_key, u, local=binding.local)
         db.commit()
-        raise HTTPException(status_code=502, detail=f"refine failed: {exc}")
+        _applog.warning("refine failed: %s", exc)
+        raise errors.http_error(502, errors.REFINE_FAILED)
     for u in usages:
-        usage.record_usage(db, refine.MODEL, u)
+        usage.record_usage(db, binding.ledger_key, u, local=binding.local)
     db.commit()
     return result
 
@@ -2149,7 +2529,7 @@ async def propose_scoring_rule(
     job_id: int,
     refresh: bool = False,
     db: sqlite3.Connection = Depends(get_db),
-    client=Depends(get_compose_client),
+    client=Depends(get_analysis_client),
 ) -> dict:
     """On-demand (Phase 7i): read this job's JD and propose one scoring-layer
     role-mismatch rule. A pending proposal already on file for the job is
@@ -2172,23 +2552,26 @@ async def propose_scoring_rule(
     try:
         criteria = load_criteria()
     except CriteriaError as exc:
-        raise HTTPException(status_code=422, detail=f"criteria error: {exc}")
+        raise HTTPException(status_code=422, detail=errors.fmt(errors.CRITERIA_INVALID, str(exc)))
     system = learned.build_proposal_prompt(
         criteria,
         build_dismissal_digest(db),
         [r["text"] for r in learned.read_scoring_rules(db)],
     )
     user = learned.build_user_message(job)
+    binding = aicfg.binding_for(db, "learned")
+    model = binding.model
     try:
-        out, usages = await learned.propose_rule(client, system, user)
+        out, usages = await learned.propose_rule(client, system, user, model)
     # Broad: anthropic is lazily imported, so its typed exceptions can't be caught.
     except Exception as exc:
         for u in usage.usages_of(exc):
-            usage.record_usage(db, learned.MODEL, u)
+            usage.record_usage(db, binding.ledger_key, u, local=binding.local)
         db.commit()
-        raise HTTPException(status_code=502, detail=f"rule proposal failed: {exc}")
+        _applog.warning("scoring-rule proposal failed: %s", exc)
+        raise errors.http_error(502, errors.RULE_PROPOSAL_FAILED)
     for u in usages:
-        usage.record_usage(db, learned.MODEL, u)
+        usage.record_usage(db, binding.ledger_key, u, local=binding.local)
 
     proposal = {
         "id": str(uuid4()),
@@ -2207,6 +2590,39 @@ async def propose_scoring_rule(
     return proposal
 
 
+@app.post("/api/settings/linkedin-titles/suggest")
+async def suggest_linkedin_titles(
+    db: sqlite3.Connection = Depends(get_db),
+    client=Depends(get_analysis_client),
+) -> dict:
+    """On-demand: propose adjacent-discipline titles for the LinkedIn role-check
+    defaults (the wizard's deterministic derivation can't reach neighbours —
+    e.g. UX research for a designer). Suggestions are review-then-add cards in
+    Settings → Sourcing; nothing lands in the setting without an explicit Add.
+    503 keyless via the dependency, so the keyless suite never goes near it."""
+    try:
+        criteria = load_criteria()
+    except CriteriaError as exc:
+        raise HTTPException(status_code=422, detail=errors.fmt(errors.CRITERIA_INVALID, str(exc)))
+    existing = list(_setting_value(db, "linkedin_title_defaults") or [])
+    system = linkedin_titles.build_prompt(criteria, existing)
+    binding = aicfg.binding_for(db, "linkedin_titles")
+    model = binding.model
+    try:
+        suggestions, usages = await linkedin_titles.propose(client, system, existing, model)
+    # Broad: anthropic is lazily imported, so its typed exceptions can't be caught.
+    except Exception as exc:
+        for u in usage.usages_of(exc):
+            usage.record_usage(db, binding.ledger_key, u, local=binding.local)
+        db.commit()
+        _applog.warning("linkedin title suggestion failed: %s", exc)
+        raise errors.http_error(502, errors.TITLE_SUGGEST_FAILED)
+    for u in usages:
+        usage.record_usage(db, binding.ledger_key, u, local=binding.local)
+    db.commit()
+    return {"suggestions": suggestions}
+
+
 # Roadmap synthesis (Phase 4's deferred pass): the user's raw onboarding words
 # become the reflection prose the scorer leans on. Two transports — a keyed
 # Sonnet call, or a copied prompt + a pasted reply — converge on one validated
@@ -2222,7 +2638,7 @@ def _criteria_for_synthesis():
     try:
         return load_criteria()
     except CriteriaError as exc:
-        raise HTTPException(status_code=422, detail=f"criteria error: {exc}")
+        raise HTTPException(status_code=422, detail=errors.fmt(errors.CRITERIA_INVALID, str(exc)))
 
 
 @app.get("/api/scoring/synthesis")
@@ -2245,24 +2661,27 @@ async def get_synthesis_prompt() -> dict:
 
 @app.post("/api/scoring/synthesis")
 async def propose_synthesis(
-    db: sqlite3.Connection = Depends(get_db), client=Depends(get_compose_client)
+    db: sqlite3.Connection = Depends(get_db), client=Depends(get_analysis_client)
 ) -> dict:
     crit = _criteria_for_synthesis()
     try:
         system, user = synthesis.build_synthesis_prompt(crit, onboarding.read_roadmap())
     except synthesis.SynthesisError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
+    binding = aicfg.binding_for(db, "synthesis")
+    model = binding.model
     try:
-        data, usages = await synthesis.propose(client, system, user, len(crit.tier2))
+        data, usages = await synthesis.propose(client, system, user, len(crit.tier2), model)
     # Broad: anthropic is lazily imported, so its typed exceptions can't be caught.
     except Exception as exc:
         for u in usage.usages_of(exc):
-            usage.record_usage(db, synthesis.MODEL, u)
+            usage.record_usage(db, binding.ledger_key, u, local=binding.local)
         db.commit()
-        raise HTTPException(status_code=502, detail=f"synthesis failed: {exc}")
+        _applog.warning("synthesis failed: %s", exc)
+        raise errors.http_error(502, errors.SYNTHESIS_FAILED)
     for u in usages:
-        usage.record_usage(db, synthesis.MODEL, u)
-    proposal = synthesis.write_proposal(db, "api", synthesis.MODEL, crit.tier2, data)
+        usage.record_usage(db, binding.ledger_key, u, local=binding.local)
+    proposal = synthesis.write_proposal(db, "api", model, crit.tier2, data)
     db.commit()
     return {"proposal": proposal, "available": True}
 
@@ -2335,7 +2754,7 @@ async def apply_synthesis(
     except synthesis.SynthesisError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
     except CriteriaError as exc:
-        raise HTTPException(status_code=422, detail=f"criteria error: {exc}")
+        raise HTTPException(status_code=422, detail=errors.fmt(errors.CRITERIA_INVALID, str(exc)))
     synthesis.clear_proposal(db)
     db.commit()
     params, tier2 = read_editable()
@@ -2421,7 +2840,10 @@ async def tailor_application(
     if pending is not None:
         raise HTTPException(
             status_code=409,
-            detail=f"tailoring {pending['id']} is already pending for this application",
+            detail={
+                "message": errors.fmt(errors.TAILORING_PENDING),
+                "tailoring_id": pending["id"],
+            },
         )
     job = db.execute(
         """SELECT jobs.*, companies.name AS company_name
@@ -2430,10 +2852,7 @@ async def tailor_application(
         (application["job_id"],),
     ).fetchone()
     if not (job["description_text"] or "").strip():
-        raise HTTPException(
-            status_code=409,
-            detail="job has no description text — add the JD to the job first",
-        )
+        raise HTTPException(status_code=409, detail=errors.fmt(errors.JOB_NO_DESCRIPTION))
     try:
         content = render.load_content(render.CONTENT_PATH)
     except render.ResumeError as exc:
@@ -2442,23 +2861,26 @@ async def tailor_application(
         compose.load_voice_guide(), compose.ai_tells_prompt_block()
     )
     user = tailor.build_user_message(job, content, body.instructions)
+    binding = aicfg.binding_for(db, "tailor")
+    model = binding.model
     try:
-        data, usages = await tailor.generate(client, system, user)
+        data, usages = await tailor.generate(client, system, user, model)
     # Broad for the same reason as compose: anthropic is lazily imported.
     except Exception as exc:
         for u in usage.usages_of(exc):
-            usage.record_usage(db, tailor.MODEL, u)
+            usage.record_usage(db, binding.ledger_key, u, local=binding.local)
         db.commit()
-        raise HTTPException(status_code=502, detail=f"tailoring generation failed: {exc}")
+        _applog.warning("tailoring generation failed: %s", exc)
+        raise errors.http_error(502, errors.TAILOR_FAILED)
     for u in usages:
-        usage.record_usage(db, tailor.MODEL, u)
+        usage.record_usage(db, binding.ledger_key, u, local=binding.local)
     plan, warnings = tailor.normalize_changes(data["changes"], content)
     cursor = db.execute(
         """INSERT INTO tailorings (application_id, status, analysis, change_plan,
                                    cover_letter, model)
            VALUES (?, 'pending', ?, ?, ?, ?)""",
         (application_id, data["analysis"].strip(), json.dumps(plan),
-         data["cover_letter"].strip(), tailor.MODEL),
+         data["cover_letter"].strip(), model),
     )
     db.commit()
     return _tailoring_payload(_fetch_tailoring_row(db, cursor.lastrowid)) | {
@@ -2734,16 +3156,19 @@ async def chat_tailoring(
     system = tailor.build_chat_system_prompt(
         compose.load_voice_guide(), compose.ai_tells_prompt_block()
     )
+    binding = aicfg.binding_for(db, "tailor")
+    model = binding.model
     try:
-        parsed, usages = await tailor.chat(client, system, messages)
+        parsed, usages = await tailor.chat(client, system, messages, model)
     # Broad for the same reason as compose: anthropic is lazily imported.
     except Exception as exc:
         for u in usage.usages_of(exc):
-            usage.record_usage(db, tailor.MODEL, u)
+            usage.record_usage(db, binding.ledger_key, u, local=binding.local)
         db.commit()
-        raise HTTPException(status_code=502, detail=f"chat turn failed: {exc}")
+        _applog.warning("tailoring chat turn failed: %s", exc)
+        raise errors.http_error(502, errors.TAILOR_CHAT_FAILED)
     for u in usages:
-        usage.record_usage(db, tailor.MODEL, u)
+        usage.record_usage(db, binding.ledger_key, u, local=binding.local)
     merged, warnings = tailor.merge_chat_changes(plan, content, parsed)
     letter = parsed["cover_letter"] or row["cover_letter"]
     db.execute(
@@ -2868,7 +3293,7 @@ async def upload_application_file(
     if not safe_filename(filename) or Path(filename).suffix.lower() not in UPLOAD_EXTENSIONS:
         raise HTTPException(
             status_code=400,
-            detail="filename must be a plain name ending in .pdf/.docx/.doc/.txt/.md/.html",
+            detail=errors.fmt(errors.UPLOAD_BAD_FILENAME),
         )
     if GENERATED_FILE_RE.fullmatch(filename):
         raise HTTPException(status_code=409, detail="that name is reserved for generated tailoring files")

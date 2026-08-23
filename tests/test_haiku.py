@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from jshq import aicfg
 from jshq.scoring import haiku
 from jshq.scoring.criteria import NEUTRAL_DISPLAY_NAME, Criteria
 
@@ -191,7 +192,7 @@ def test_score_job_happy_path():
     assert "fit_score" not in data
     assert data["tier2"] == GOOD_SUBSCORES
     assert state["calls"] == 1
-    assert state["kwargs"]["model"] == haiku.MODEL
+    assert state["kwargs"]["model"] == aicfg.DEFAULTS["scoring"]
     assert state["kwargs"]["output_config"]["format"]["schema"] == haiku.build_schema()
 
 

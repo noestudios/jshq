@@ -21,12 +21,11 @@ so tests pass a fake and can never hit the live API (mirrors haiku/compose).
 
 import json
 
-from jshq import compose
+from jshq import aicfg
 from . import haiku
 from .criteria import Criteria
 from .rules import _get_json, _put_json
 
-MODEL = "claude-sonnet-5"  # JD reasoning tier, matches compose/tailor
 MAX_TOKENS = 1024
 
 SCHEMA = {
@@ -98,16 +97,17 @@ def _parse(resp) -> dict:
     return {"rule_text": rule_text, "rationale": (data.get("rationale") or "").strip()}
 
 
-async def propose_rule(client, system: str, user: str) -> tuple[dict, list]:
-    """One Sonnet call (plus one retry on unusable output). Returns (proposal,
+async def propose_rule(client, system: str, user: str, model: str | None = None) -> tuple[dict, list]:
+    """One model call (plus one retry on unusable output). Returns (proposal,
     per-call usages). Raises LearnedRuleError."""
+    model = model or aicfg.DEFAULTS["learned"]
     last_exc: Exception | None = None
     usages: list = []
     for _ in range(2):
         resp = await client.messages.create(
-            model=MODEL,
+            model=model,
             max_tokens=MAX_TOKENS,
-            thinking=compose.THINKING,
+            **aicfg.thinking_kwargs(model),
             system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
             messages=[{"role": "user", "content": user}],
             output_config={"format": {"type": "json_schema", "schema": SCHEMA}},

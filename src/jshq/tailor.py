@@ -24,11 +24,10 @@ import copy
 import json
 import sqlite3
 
-from jshq import compose
+from jshq import aicfg, compose
 from jshq.resume import render
 from jshq.scoring.criteria import persona_display_name
 
-MODEL = compose.MODEL
 MAX_TOKENS = 8192
 CHAT_MAX_TOKENS = 4096  # a turn returns a short reply + deltas, not a full plan
 JD_CHAR_LIMIT = 12_000  # tailoring reads the full JD, not compose's 6k gist
@@ -463,9 +462,9 @@ def apply_changes(content: dict, plan: list[dict]) -> dict:
 # ---------------------------------------------------------------- model call
 
 async def _call_with_retry(
-    client, system: str, messages: list[dict], parser, max_tokens: int
+    client, system: str, messages: list[dict], parser, max_tokens: int, model: str
 ) -> tuple[dict, list]:
-    """One Sonnet call (the SDK retries 429/5xx itself) plus one corrective
+    """One model call (the SDK retries 429/5xx itself) plus one corrective
     retry if the reply doesn't parse — the parse error goes back to the model
     as a follow-up turn. Returns (parsed contract dict, per-call usages)."""
     system_blocks = [
@@ -475,7 +474,7 @@ async def _call_with_retry(
     usages: list = []
     for _ in range(2):
         resp = await client.messages.create(
-            model=MODEL, max_tokens=max_tokens, thinking=compose.THINKING,
+            model=model, max_tokens=max_tokens, **aicfg.thinking_kwargs(model),
             system=system_blocks, messages=messages
         )
         usages.append(getattr(resp, "usage", None))
@@ -495,15 +494,17 @@ async def _call_with_retry(
     raise TailorError(f"unusable output after retry: {last_error}", usages)
 
 
-async def generate(client, system: str, user: str) -> tuple[dict, list]:
+async def generate(client, system: str, user: str, model: str | None = None) -> tuple[dict, list]:
     """The initial tailoring run: one user turn in, (contract, usages) out."""
     return await _call_with_retry(
-        client, system, [{"role": "user", "content": user}], parse_output, MAX_TOKENS
+        client, system, [{"role": "user", "content": user}], parse_output, MAX_TOKENS,
+        model or aicfg.DEFAULTS["tailor"],
     )
 
 
-async def chat(client, system: str, messages: list[dict]) -> tuple[dict, list]:
+async def chat(client, system: str, messages: list[dict], model: str | None = None) -> tuple[dict, list]:
     """A refinement turn: the replayed thread in, (chat contract, usages) out."""
     return await _call_with_retry(
-        client, system, messages, parse_chat_output, CHAT_MAX_TOKENS
+        client, system, messages, parse_chat_output, CHAT_MAX_TOKENS,
+        model or aicfg.DEFAULTS["tailor"],
     )

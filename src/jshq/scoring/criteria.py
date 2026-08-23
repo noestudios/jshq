@@ -238,7 +238,20 @@ _REQUIRED_KEYS = {
 
 
 class CriteriaError(Exception):
-    """fit_criteria.md is missing, malformed, or incomplete."""
+    """fit_criteria.md is missing, malformed, or incomplete.
+
+    ``field``/``kind`` are optional structured context for the Settings
+    editor: which tier1_params key failed and how ("missing", "int", "list",
+    "dict", "radius"), so the frontend can compose an inline field error
+    without parsing this exception's prose (error-audit P1). The long tail
+    of doc-shape errors (taxonomy, bands, scale) deliberately leaves them
+    None — that audience is someone hand-editing the doc, and the precise
+    technical message IS the friendly one."""
+
+    def __init__(self, message: str, *, field: str | None = None, kind: str | None = None):
+        super().__init__(message)
+        self.field = field
+        self.kind = kind
 
 
 @dataclass(frozen=True)
@@ -329,22 +342,22 @@ def _validate_radius(params: dict) -> None:
     if cfg is None:
         return
     if not isinstance(cfg, dict):
-        raise CriteriaError("tier1_params['location_radius'] must be an object or null")
+        raise CriteriaError("tier1_params['location_radius'] must be an object or null", field="location_radius", kind="radius")
     center = cfg.get("center")
     if not isinstance(center, dict) or not _finite_number(center.get("lat")) or not _finite_number(
         center.get("lng")
     ):
-        raise CriteriaError("location_radius.center must have finite numeric 'lat' and 'lng'")
+        raise CriteriaError("location_radius.center must have finite numeric 'lat' and 'lng'", field="location_radius", kind="radius")
     minutes = cfg.get("radius_minutes")
     if not _finite_number(minutes) or minutes <= 0:
-        raise CriteriaError("location_radius.radius_minutes must be a positive number")
+        raise CriteriaError("location_radius.radius_minutes must be a positive number", field="location_radius", kind="radius")
     est = cfg.get("estimate")
     if est is not None:
         if not isinstance(est, dict):
-            raise CriteriaError("location_radius.estimate must be an object")
+            raise CriteriaError("location_radius.estimate must be an object", field="location_radius", kind="radius")
         for key in ("detour_factor", "avg_mph"):
             if key in est and (not _finite_number(est[key]) or est[key] <= 0):
-                raise CriteriaError(f"location_radius.estimate.{key} must be a positive number")
+                raise CriteriaError(f"location_radius.estimate.{key} must be a positive number", field="location_radius", kind="radius")
 
 
 def _parse_persona(text: str) -> tuple[dict, tuple[int, int] | None]:
@@ -642,11 +655,15 @@ def load_criteria(path: Path | None = None) -> Criteria:
 
     for key, expected in _REQUIRED_KEYS.items():
         if key not in params:
-            raise CriteriaError(f"tier1_params missing required key {key!r}")
+            raise CriteriaError(
+                f"tier1_params missing required key {key!r}", field=key, kind="missing"
+            )
         if not isinstance(params[key], expected):
             raise CriteriaError(
                 f"tier1_params[{key!r}] must be {expected.__name__}, "
-                f"got {type(params[key]).__name__}"
+                f"got {type(params[key]).__name__}",
+                field=key,
+                kind=expected.__name__,
             )
     _validate_radius(params)
 

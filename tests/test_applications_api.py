@@ -87,7 +87,11 @@ def test_create_duplicate_409(client, seed_application):
     job_id = client.get(f"/api/applications/{app_id}").json()["job_id"]
     r = client.post("/api/applications", json={"job_id": job_id})
     assert r.status_code == 409
-    assert str(app_id) in r.json()["detail"]
+    # Structured 409: the human sentence carries the code; the existing id
+    # rides alongside for programmatic recovery, not inside the prose.
+    detail = r.json()["detail"]
+    assert "[JSHQ-103]" in detail["message"]
+    assert detail["application_id"] == app_id
 
 
 def test_list_and_detail(client, seed_application):

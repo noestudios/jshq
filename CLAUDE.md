@@ -24,7 +24,10 @@ network service or needs an API key.
 ## Run
 
 - `jshq` — serve the app (frontend + API, one process) on `127.0.0.1:5747`.
-- `jshq refresh` — run one ATS ingestion pass. Point a scheduler at it twice a day.
+- `jshq refresh` — run one ATS ingestion pass.
+- `jshq schedule --install` — put `jshq refresh` and `jshq backup` on the OS
+  scheduler (launchd/cron/schtasks), twice a day by default; `--status` and
+  `--uninstall` round it out.
 - `jshq backup` — take one verified backup into `backups/` in the data directory.
 
 ## Stack and conventions
@@ -42,12 +45,17 @@ network service or needs an API key.
 
 - **Localhost only.** The server binds `127.0.0.1`. There is no auth and no
   account system; do not add one.
-- **Graceful without an API key.** Every AI feature degrades (skips or returns an
-  actionable message), never crashes. The whole test suite runs keyless.
+- **Graceful without a credential or endpoint, per task.** Every AI feature
+  degrades (skips or returns an actionable message), never crashes — whether
+  the missing piece is the Anthropic key or a configured OpenAI-compatible
+  endpoint. The whole test suite runs keyless and endpointless.
 - **No phone-home.** No telemetry, crash reporting, update checks, or CDN assets.
   The only permitted network calls are ATS job boards (robots.txt-respecting,
-  honest User-Agent, twice-daily max), `api.anthropic.com` with the user's own
-  key, and a per-company logo lookup. `PRIVACY.md` is the complete outbound
+  honest User-Agent, on the user's refresh schedule), the user's configured AI
+  endpoints (`api.anthropic.com` with their own key, plus any OpenAI-compatible
+  endpoint they explicitly set up in Settings — never contacted otherwise), and
+  a per-company logo lookup. `jshq schedule` itself only writes to the local
+  OS scheduler, never the network. `PRIVACY.md` is the complete outbound
   inventory and must be updated with any new call.
 - **`Cache-Control: no-cache` on all static/frontend responses.** The ES-module
   graph is un-hashed; heuristic caching half-updates it.

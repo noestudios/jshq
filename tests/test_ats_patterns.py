@@ -296,3 +296,68 @@ def test_atlassian_signature_and_urls():
     assert p.public_board_url(p.ATLASSIAN, "www.atlassian.com") == (
         "https://www.atlassian.com/company/careers/all-jobs"
     )
+
+
+def test_recruitee_subdomain():
+    assert p.extract_ats_candidates("https://exampleco.recruitee.com/api/offers/") == [
+        (p.RECRUITEE, "exampleco")
+    ]
+    assert p.public_board_url(p.RECRUITEE, "exampleco") == "https://exampleco.recruitee.com"
+
+
+def test_workable_board_and_widget_urls():
+    assert p.extract_ats_candidates("https://apply.workable.com/exampleco/") == [
+        (p.WORKABLE, "exampleco")
+    ]
+    # the widget-API form yields the account slug, not the "api" path prefix
+    assert p.extract_ats_candidates(
+        "https://apply.workable.com/api/v1/widget/accounts/exampleco?details=true"
+    ) == [(p.WORKABLE, "exampleco")]
+    # job short-links carry a shortcode, not a slug — "j" is a stopword and
+    # the pattern never reaches the second path segment
+    assert p.extract_ats_candidates("https://apply.workable.com/j/A755C605B8") == []
+    assert p.public_board_url(p.WORKABLE, "exampleco") == "https://apply.workable.com/exampleco"
+
+
+def test_rippling_board_and_api_urls():
+    assert p.extract_ats_candidates(
+        "https://ats.rippling.com/exampleco/jobs/65d89c21-65ea-4259-bb9b-db41dcb007d3"
+    ) == [(p.RIPPLING, "exampleco")]
+    assert p.extract_ats_candidates(
+        "https://api.rippling.com/platform/api/ats/v1/board/exampleco/jobs"
+    ) == [(p.RIPPLING, "exampleco")]
+    assert p.public_board_url(p.RIPPLING, "exampleco") == "https://ats.rippling.com/exampleco/jobs"
+
+
+def test_rippling_urls():
+    assert p.rippling_list_url("exampleco") == (
+        "https://api.rippling.com/platform/api/ats/v1/board/exampleco/jobs"
+    )
+    assert p.rippling_detail_url("exampleco", "65d89c21") == (
+        "https://api.rippling.com/platform/api/ats/v1/board/exampleco/jobs/65d89c21"
+    )
+
+
+def test_name_matches_full_and_partial():
+    # every core token required: a stranger's board that shares one word fails
+    assert p.name_matches("Marigold Workshop", "About Marigold Workshop: we make media.")
+    assert not p.name_matches(
+        "Marigold Workshop",
+        "Marigold is a pet-insurance marketplace. Provider Success - Senior Account Manager.",
+    )
+    assert not p.name_matches("Marigold Workshop", None)
+    assert not p.name_matches("Marigold Workshop", "")
+
+
+def test_name_matches_concatenated_and_noise():
+    # concatenated spelling of a multi-word name counts
+    assert p.name_matches("Marigold Workshop", "Careers at MarigoldWorkshop")
+    # noise words don't have to appear
+    assert p.name_matches("Nintendo of America", "Nintendo builds consoles.")
+    # single-token names never match as bare substrings of longer words
+    assert not p.name_matches("Box", "Grab your toolbox and get building.")
+    assert p.name_matches("Box", "Box is a cloud content platform.")
+
+
+def test_name_matches_unicode():
+    assert p.name_matches("Ørsted", "Orsted develops offshore wind farms.")

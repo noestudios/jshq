@@ -394,6 +394,21 @@ function withIcon(html) {
 
 /* A muted "as of" timestamp appended to a time-sensitive banner (QA 2026-06-15):
    how stale the underlying condition is. Omitted when there's no meaningful time. */
+/* The persisted verify detail (backup_status.json) is written for the log
+   ("integrity_check failed", "row count mismatch: jobs"); translate the known
+   shapes for the banner (error-audit F7). An unknown shape shows as-is —
+   imperfect beats silent. The raw-exception shapes deliberately drop their
+   {exc} tail; the backup.log has it. */
+function backupDetailText(detail) {
+  if (!detail) return "";
+  if (detail === "backup file missing or empty") return "the backup file is missing or empty";
+  if (detail === "integrity_check failed") return "the backup copy failed its integrity check";
+  if (detail.startsWith("row count mismatch")) return "the backup copy is missing rows";
+  if (detail.startsWith("backup unreadable")) return "the backup copy couldn't be read";
+  if (detail.startsWith("live DB unreadable")) return "the live database couldn't be read";
+  return detail;
+}
+
 function bannerTime(ts, { bullet = true } = {}) {
   if (!ts) return "";
   return ` <span class="banner-time" title="${esc(fmtStamp(ts))}">${bullet ? "· " : ""}${esc(fmtAgo(ts))}</span>`;
@@ -579,8 +594,9 @@ function banners() {
       // "nightly job" the app never sets up (backups are run on demand).
       if (hasJobs) out.push({ key: "backup-missing", html: `<div class="stale-banner">No backup yet — run a backup to protect your saved jobs and applications.</div>` });
     } else if (backup.result === "failed") {
+      const why = backupDetailText(backup.detail);
       out.push({ key: "backup-failed", html:
-        `<div role="alert" class="stale-banner banner-error">Last backup failed verification${backup.detail ? ` — ${esc(backup.detail)}` : ""}.${bannerTime(backup.checked_at)}</div>`
+        `<div role="alert" class="stale-banner banner-error">Last backup failed its check${why ? ` — ${esc(why)}` : ""}. Run a fresh backup.${bannerTime(backup.checked_at)}</div>`
       });
     } else if (backup.checked_at && Date.now() - Date.parse(backup.checked_at) > BACKUP_STALE_MS) {
       out.push({ key: "backup-stale", html:
@@ -793,6 +809,7 @@ function stopRefreshPoll() {
    element, so a leaked timer would repaint Today over whatever view is showing. */
 function startRefreshPoll() {
   stopRefreshPoll();
+  let misses = 0;
   refreshPoll = setInterval(async () => {
     if (!root || !root.querySelector(".today")) {
       stopRefreshPoll(); // Today is no longer mounted
@@ -801,8 +818,18 @@ function startRefreshPoll() {
     let s;
     try {
       s = await api.refreshStatus();
+      misses = 0;
     } catch {
+      // One failed tick is usually a blip (server mid-restart between polls);
+      // keep watching. Dying on the first error used to leave the green
+      // "Refreshing…" bar up forever with state.running stuck true. After
+      // three in a row, stop pretending: clear the bar and say so — the
+      // refresh itself continues server-side.
+      if (++misses < 3) return;
       stopRefreshPoll();
+      state.running = false;
+      paint();
+      toast("Lost contact with the refresh — reload to see its result.", { error: true });
       return;
     }
     if (!s.running) {

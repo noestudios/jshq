@@ -37,11 +37,13 @@ A change that breaks one of these can't merge, however useful it is otherwise.
 
 - **Zero phone-home.** No telemetry, analytics, crash reporting, or update
   checks, and no CDN assets. The only outbound calls are ATS job boards and the
-  Anthropic API with the user's own key. A new network call has to be added to
+  user's configured AI provider: the Anthropic API with their own key, or an
+  OpenAI-compatible endpoint they explicitly set up (never contacted
+  otherwise). A new network call has to be added to
   [PRIVACY.md](PRIVACY.md).
 - **Localhost only.** The server binds 127.0.0.1. There are no accounts and no auth.
-- **Works without an API key.** Every AI feature degrades to an actionable
-  message and keeps running.
+- **Works without an API key or endpoint.** Every AI feature degrades to an
+  actionable message, per task, and keeps running.
 - **Scoring config lives in the criteria document.** Behavior changes go in its
   machine blocks.
 - **No personal data.** No real names, employers, or locations. The example

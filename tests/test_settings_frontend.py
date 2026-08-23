@@ -48,6 +48,32 @@ def test_key_section_names_where_the_key_lives():
     assert "data directory" in js
 
 
+def test_linkedin_title_defaults_are_editable_in_sourcing():
+    """The central default list behind every new company's LinkedIn role checks
+    (seed-on-create, main.py) was API-only — the Settings UI is the fix for
+    'there is no central place to edit the defaults'."""
+    js = _read("js/views/settings.js")
+    assert "LinkedIn role checks" in js
+    assert 'tagsHtml("set", "linkedin_title_defaults"' in js
+    # Hydrated everywhere the sibling list settings are, so the section never
+    # paints stale after a failed write's reload.
+    assert js.count('api.getSetting("linkedin_title_defaults")') >= 2
+
+
+def test_linkedin_suggest_button_is_key_gated_and_review_first():
+    """Suggest-with-AI renders ONLY when a key is configured (owner call), and
+    suggestions are accept/ignore review cards — nothing joins the list
+    without an explicit Add."""
+    api = _read("js/api.js")
+    assert 'request("POST", "/api/settings/linkedin-titles/suggest")' in api
+    js = _read("js/views/settings.js")
+    gate = js.split("function linkedinSuggestHtml()")[1][:120]
+    assert 'if (!state.apiKey?.configured) return ""' in gate
+    for action in ("linkedin-suggest", "linkedin-suggest-add", "linkedin-suggest-ignore"):
+        assert f'action === "{action}"' in js, f"missing handler for {action}"
+        assert f'data-action="{action}"' in js, f"missing control for {action}"
+
+
 def test_persona_editor_is_wired():
     api = _read("js/api.js")
     assert 'request("GET", "/api/scoring/persona")' in api
@@ -220,3 +246,123 @@ def test_rescore_poll_never_repaints_over_an_edited_field():
     assert 'active.matches?.("input, textarea, select")' in guard
     assert "if (editing) updateRescoreProgress();" in guard
     assert "else paint();" in guard
+
+
+def test_api_js_defines_the_schedule_methods():
+    api = _read("js/api.js")
+    assert 'request("GET", "/api/schedule")' in api
+    assert 'request("PUT", "/api/schedule", { refresh, backup })' in api
+    assert 'request("POST", "/api/schedule/install")' in api
+    assert 'request("POST", "/api/schedule/uninstall")' in api
+
+
+def test_settings_view_wires_the_schedule_actions():
+    js = _read("js/views/settings.js")
+    assert "api.getSchedule()" in js  # joins the mount Promise.all
+    for action in ("install-schedule", "remove-schedule"):
+        assert f'action === "{action}"' in js, f"missing handler for {action}"
+        assert f'data-action="{action}"' in js, f"missing button for {action}"
+    # Install is one verb: save the times, then make the OS match — a
+    # "saved but not applied" drift state must not exist.
+    body = js.split("async function installSchedule()")[1].split("\nasync function ")[0]
+    assert "api.putSchedule(refresh, backup)" in body
+    assert "api.installSchedule()" in body
+    # Remove is destructive — gated on the confirm modal like the endpoint's.
+    remove = js.split("async function removeSchedule()")[1].split("\nasync function ")[0]
+    assert "confirmModal({" in remove
+    assert "api.uninstallSchedule()" in remove
+
+
+def test_schedule_section_renders_and_degrades():
+    js = _read("js/views/settings.js")
+    section = js.split("function scheduleSection()")[1].split("\nfunction ")[0]
+    # rendered on the System tab
+    assert "${scheduleSection()}" in js
+    # times render as house time-picker slots (one per time, add/remove), not
+    # a comma-separated text field — the same control the reminder modal uses
+    assert "timeFieldHtml(" in section
+    for action in ("schedule-slot-add", "schedule-slot-remove"):
+        assert f'data-action="{action}"' in js, f"missing control for {action}"
+        assert f'action === "{action}"' in js, f"missing handler for {action}"
+    # Apply reads the pickers' canonical hidden inputs; empties drop, an
+    # all-empty job blocks with a toast
+    body = js.split("async function installSchedule()")[1].split("\nasync function ")[0]
+    assert "readScheduleSlots(" in body and "toast(" in body
+    # slot edits survive the add/remove repaint via view state
+    assert "function syncScheduleSlots()" in js and "scheduleSlots" in js
+    # unsupported platform: no dead buttons, an honest manual pointer instead
+    assert "isn't supported on this system" in section
+    unsupported = section.split("if (!s.supported)")[1].split("}")[0]
+    assert "data-action" not in unsupported
+
+
+def test_unified_ai_section_composes_the_three_surfaces():
+    """One AI section (owner direction 2026-08-22): the provider picker, the
+    picked provider's credential pane, and the per-task split as an Advanced
+    disclosure — no more three sibling sections."""
+    js = _read("js/views/settings.js")
+    assert "${aiSection()}" in js
+    for gone in ("${apiKeySection()}", "${aiProvidersSection()}", "${aiModelsSection()}"):
+        assert gone not in js, f"stale standalone section render: {gone}"
+    section = js.split("function aiSection()")[1].split("\nfunction ")[0]
+    assert "apiKeyPane()" in section and "endpointPane()" in section
+    assert 'data-action="pick-provider"' in section
+    assert "<details" in section and "axisControls(" in section
+    # The derived state is never stored — it reads the axes every paint.
+    derived = js.split("function derivedProvider()")[1].split("\nfunction ")[0]
+    assert "state.aiModels" in derived and "per_task" in derived
+
+
+def test_provider_picker_switches_tasks_and_keeps_credentials():
+    js = _read("js/views/settings.js")
+    assert 'action === "pick-provider"' in js
+    body = js.split("async function pickProvider(")[1].split("\nasync function ")[0]
+    # Ready → both axes PUT with the remembered model for that provider.
+    assert "remembered" in body and "putAxes(" in body
+    # Not ready → intent + reveal, never a credential write from the picker.
+    assert "pickerIntent" in body
+    for forbidden in ("putApiKey", "putAiProviders", "deleteApiKey", "deleteAiProviders"):
+        assert forbidden not in body, f"picker must not touch credentials: {forbidden}"
+    # The panes' Saves complete a pending switch.
+    save_key = js.split("async function saveApiKey(")[1].split("\nasync function ")[0]
+    assert 'pickProvider("anthropic")' in save_key
+    save_ep = js.split("async function saveAiProviders()")[1].split("\nasync function ")[0]
+    assert "data-compat-active-model" in save_ep and "putAxes(" in save_ep
+
+
+def test_simple_compat_model_field_commits_on_change():
+    js = _read("js/views/settings.js")
+    assert "data-compat-active-model" in js
+    # Commit on blur/Enter like the per-axis field — never per keystroke.
+    assert 't.matches("[data-compat-active-model]")' in js
+    body = js.split("async function saveActiveCompatModel(")[1].split("\nasync function ")[0]
+    assert '"openai_compat"' in body and "putAxes(" in body
+
+
+def test_declining_ai_greys_out_the_endpoint_path_too():
+    """"I don't want to use AI" (renamed from "…an API key", 2026-08-22)
+    declines the whole feature: offered only when NEITHER provider is set up,
+    and while checked the picker's endpoint segment disables alongside the
+    key form."""
+    js = _read("js/views/settings.js")
+    assert "I don't want to use AI" in js
+    assert "I don't want to use an API key" not in js
+    # Offered only with no key AND no endpoint.
+    assert "k.configured || state.aiProviders?.configured" in js
+    # The endpoint segment carries the declined disable...
+    assert 'segBtn("openai_compat", "Your endpoint", declinedAll)' in js
+    # ...and the handler backstops it.
+    picker = js.split("async function pickProvider(")[1].split("\nasync function ")[0]
+    assert "state.apiKeyDeclined === true" in picker
+
+
+def test_credential_inputs_are_field_sized_not_tag_chips():
+    """The key/URL inputs reuse the savebar's .settings-add-input, whose 130px
+    tag-adder sizing truncated long secrets and URLs into guesswork (owner
+    report 2026-08-22). The cred modifier upgrades them to field scale."""
+    js = _read("js/views/settings.js")
+    for attr in ("data-api-key-input", "data-compat-url-input", "data-compat-key-input"):
+        assert f'settings-add-input settings-cred-input" {attr}' in js, attr
+    css = _read("css/app.css")
+    block = css.split(".settings-savebar .settings-cred-input {")[1].split("}")[0]
+    assert "min-width" in block and "flex" in block

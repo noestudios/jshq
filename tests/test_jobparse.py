@@ -132,7 +132,7 @@ def test_parse_url_llm_failure_degrades_not_500(monkeypatch):
 
 
 def test_parse_url_endpoint_returns_fields(client, monkeypatch):
-    async def fake_parse(url, *, client=None):
+    async def fake_parse(url, *, client=None, model=None):
         return {
             "title": "Staff Designer", "location": "Remote", "remote_type": "remote",
             "salary_min": None, "salary_max": None, "description_text": "JD body",
@@ -147,7 +147,7 @@ def test_parse_url_endpoint_returns_fields(client, monkeypatch):
 
 
 def test_parse_url_endpoint_422_on_parse_error(client, monkeypatch):
-    async def boom(url, *, client=None):
+    async def boom(url, *, client=None, model=None):
         raise jobparse.JobParseError("LinkedIn postings can't be auto-pulled.")
 
     monkeypatch.setattr("jshq.jobparse.parse_job_url", boom)

@@ -16,7 +16,7 @@ import math
 import re
 import sqlite3
 
-from .. import apikey, usage
+from .. import aicfg, providers, usage
 from . import boilerplate, consistency, haiku
 from .criteria import BAND_CAP_KEYS, CriteriaError, load_criteria
 from .digest import build_dismissal_digest
@@ -628,8 +628,9 @@ def estimate_rescore(conn: sqlite3.Connection) -> dict:
     }
 
 
-# The skip message when the wish list (Tier 2) is empty — mirrors
-# apikey.MISSING_MESSAGE, surfaced in last_scoring_report.skipped (System tab).
+# The skip message when the wish list (Tier 2) is empty — mirrors the
+# providers.missing_message sentences, surfaced in last_scoring_report.skipped
+# (System tab).
 NO_CRITERIA_MESSAGE = (
     "No ranked criteria yet — add your wish list in the setup wizard "
     "(or Settings → Scoring) to turn on job scoring."
@@ -650,12 +651,13 @@ async def run_scoring(
     must reach a non-active job without widening the population). Only fit
     columns are written either way; `status`, `manually_elevated` and the
     application records are untouched."""
+    binding = aicfg.binding_for(conn, "scoring")
     if client is None:
-        if not apikey.is_configured():
-            return {"skipped": apikey.MISSING_MESSAGE}
-        from anthropic import AsyncAnthropic  # lazy: app must run without the package
-
-        client = AsyncAnthropic(max_retries=6)
+        if not providers.is_ready(conn, binding.provider):
+            return {"skipped": providers.missing_message(binding.provider)}
+        # Lazy construction inside build_client: app must run without the
+        # anthropic package.
+        client = providers.build_client(conn, binding.provider, max_retries=6)
 
     try:
         criteria = load_criteria()
@@ -696,6 +698,10 @@ async def run_scoring(
     system, shared_by_company = build_prompt_inputs(
         conn, criteria, [job for job, _ in to_score]
     )
+    # Resolved ONCE per run (Settings → System, analysis axis, top of this
+    # function) and threaded to every call AND the usage records below, so the
+    # ledger can never bill a different model than the one that scored.
+    model = binding.model
 
     sem = asyncio.Semaphore(SCORE_CONCURRENCY)
 
@@ -703,13 +709,13 @@ async def run_scoring(
         async with sem:
             try:
                 data, used = await haiku.score_job(
-                    client, system, prompt_job(job, shared_by_company), criteria
+                    client, system, prompt_job(job, shared_by_company), criteria, model
                 )
                 usages = [used] if used is not None else []
 
                 async def ask():
                     return await haiku.score_job(
-                        client, system, prompt_job(job, shared_by_company), criteria
+                        client, system, prompt_job(job, shared_by_company), criteria, model
                     )
 
                 data, extra = await escalate(job, tier1, data, criteria, ask)
@@ -801,7 +807,7 @@ async def run_scoring(
             conn.commit()
 
     if acc_calls:
-        usage.record_usage(conn, haiku.MODEL, acc, calls=acc_calls)
+        usage.record_usage(conn, binding.ledger_key, acc, calls=acc_calls, local=binding.local)
         conn.commit()
 
     return {
@@ -811,5 +817,7 @@ async def run_scoring(
         "rate_limited": rate_limited,
         "escalated": escalated,
         "sibling_overrides": len(overridden),
-        "cost": round(usage.cost_of(haiku.MODEL, acc), 6),
+        # Keyed on the ledger key, not the bare id: a compat model that
+        # happens to share an Anthropic id must not pick up its price.
+        "cost": round(usage.cost_of(binding.ledger_key, acc), 6),
     }

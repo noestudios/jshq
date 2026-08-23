@@ -15,10 +15,9 @@ from urllib.parse import urlparse
 
 import httpx
 
-from . import apikey
+from . import aicfg, apikey
 from .ats.detect import TIMEOUT, USER_AGENT
 
-MODEL = "claude-haiku-4-5"
 MAX_TOKENS = 512  # the model returns only the small structured fields, not the JD
 PAGE_TEXT_LIMIT = 16_000  # chars of stripped page text fed to the LLM fallback
 JD_CHAR_LIMIT = 12_000  # cap on the description we hand back (matches the scorer's)
@@ -153,7 +152,7 @@ def _from_json_ld(html_text: str):
     return None
 
 
-async def _from_llm(page_text: str, client):
+async def _from_llm(page_text: str, client, model: str | None = None):
     """Haiku extraction over the stripped page text. The model returns only the
     small structured fields (fast); the description is the page text itself, so we
     never pay to regenerate a multi-thousand-char JD. Returns None when the text
@@ -172,10 +171,12 @@ async def _from_llm(page_text: str, client):
         "— never invent. If the text is NOT a single real job posting (a landing, "
         "job-list, error, or nav/cookie shell page), return '' for title."
     )
+    model = model or aicfg.DEFAULTS["jobparse"]
     resp = await client.messages.create(
-        model=MODEL,
+        model=model,
         max_tokens=MAX_TOKENS,
-        temperature=0.0,
+        **aicfg.thinking_kwargs(model),
+        **aicfg.temperature_kwargs(model, 0.0),
         system=system,
         messages=[{"role": "user", "content": page_text[:PAGE_TEXT_LIMIT]}],
         output_config={"format": {"type": "json_schema", "schema": _LLM_SCHEMA}},
@@ -196,9 +197,9 @@ async def _from_llm(page_text: str, client):
     }
 
 
-async def parse_job_url(url: str, *, client=None) -> dict:
+async def parse_job_url(url: str, *, client=None, model: str | None = None) -> dict:
     """Fetch a pasted posting URL and extract its fields. JSON-LD first, then a
-    Haiku pass; returns EMPTY when the page is reachable but unparseable. Raises
+    model pass; returns EMPTY when the page is reachable but unparseable. Raises
     JobParseError (→ 422) for a bad/LinkedIn URL or an unreachable page."""
     parsed = urlparse((url or "").strip())
     if parsed.scheme not in ("http", "https") or not parsed.hostname:
@@ -242,7 +243,7 @@ async def parse_job_url(url: str, *, client=None) -> dict:
     # Every sibling AI endpoint wraps its model call the same way; this one was
     # the sole omission, and it 500ed instead of returning an actionable message.
     try:
-        llm = await _from_llm(_strip_html(resp.text), client)
+        llm = await _from_llm(_strip_html(resp.text), client, model)
     except Exception as exc:
         return {
             **EMPTY,

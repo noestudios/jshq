@@ -2,7 +2,7 @@
 cached proposal endpoint, the typed scoring_rule suggestion channel, accept/
 ignore, and the active-rules GET/DELETE."""
 
-from jshq.main import app, get_compose_client
+from jshq.main import app, get_analysis_client
 from test_haiku import fake_client  # dict -> JSON-text fake; counts calls
 
 PROPOSAL = {"rule_text": "Down-rank hands-on ML model-building roles.", "rationale": "JD is all training."}
@@ -11,19 +11,19 @@ PROPOSAL = {"rule_text": "Down-rank hands-on ML model-building roles.", "rationa
 def _propose(client, job_id):
     """Create one proposal via the endpoint with a fake client; return its body."""
     fake, state = fake_client(PROPOSAL)
-    app.dependency_overrides[get_compose_client] = lambda: fake
+    app.dependency_overrides[get_analysis_client] = lambda: fake
     try:
         resp = client.post(f"/api/jobs/{job_id}/scoring-rule-proposal")
         assert resp.status_code == 200, resp.text
         return resp.json(), state
     finally:
-        app.dependency_overrides.pop(get_compose_client, None)
+        app.dependency_overrides.pop(get_analysis_client, None)
 
 
 def test_propose_creates_typed_suggestion_and_caches(client, seed_job):
     job_id = seed_job(description_text="Build and train ML models all day.")
     fake, state = fake_client(PROPOSAL)
-    app.dependency_overrides[get_compose_client] = lambda: fake
+    app.dependency_overrides[get_analysis_client] = lambda: fake
     try:
         p = client.post(f"/api/jobs/{job_id}/scoring-rule-proposal").json()
         assert p["text"].startswith("Down-rank")
@@ -46,16 +46,16 @@ def test_propose_creates_typed_suggestion_and_caches(client, seed_job):
         ids = [x["id"] for x in client.get("/api/suggestions").json()["scoring_rule"]]
         assert ids == [p3["id"]]
     finally:
-        app.dependency_overrides.pop(get_compose_client, None)
+        app.dependency_overrides.pop(get_analysis_client, None)
 
 
 def test_propose_404_unknown_job(client):
     fake, _ = fake_client(PROPOSAL)
-    app.dependency_overrides[get_compose_client] = lambda: fake
+    app.dependency_overrides[get_analysis_client] = lambda: fake
     try:
         assert client.post("/api/jobs/9999/scoring-rule-proposal").status_code == 404
     finally:
-        app.dependency_overrides.pop(get_compose_client, None)
+        app.dependency_overrides.pop(get_analysis_client, None)
 
 
 def test_accept_moves_proposal_to_active(client, seed_job):

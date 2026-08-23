@@ -122,7 +122,12 @@ def test_invalid_put_is_422_and_leaves_doc_unchanged(client, criteria_doc):
         json={"tier1_params": bad, "tier2_criteria": current["tier2_criteria"]},
     )
     assert resp.status_code == 422
-    assert "comp_floor" in resp.json()["detail"]
+    # Structured detail (error-audit P1): the editor anchors the inline error
+    # from field/kind, never by parsing the message prose.
+    detail = resp.json()["detail"]
+    assert detail["field"] == "comp_floor"
+    assert detail["kind"] == "int"
+    assert "[JSHQ-302]" in detail["message"]
     assert criteria_doc.read_text(encoding="utf-8") == before  # live doc untouched
     assert not criteria_doc.with_name(criteria_doc.name + ".tmp").exists()
 
@@ -136,7 +141,10 @@ def test_missing_key_is_422(client, criteria_doc):
         json={"tier1_params": bad, "tier2_criteria": current["tier2_criteria"]},
     )
     assert resp.status_code == 422
-    assert "location_allowlist" in resp.json()["detail"]
+    detail = resp.json()["detail"]
+    assert detail["field"] == "location_allowlist"
+    assert detail["kind"] == "missing"
+    assert "[JSHQ-302]" in detail["message"]
 
 
 # --- location radius (Phase 7i) -----------------------------------------
@@ -185,7 +193,10 @@ def test_put_invalid_radius_is_422_and_leaves_doc_unchanged(client, criteria_doc
         json={"tier1_params": bad, "tier2_criteria": current["tier2_criteria"]},
     )
     assert resp.status_code == 422
-    assert "location_radius" in resp.json()["detail"]
+    detail = resp.json()["detail"]
+    assert detail["field"] == "location_radius"
+    assert detail["kind"] == "radius"
+    assert "[JSHQ-302]" in detail["message"]
     assert criteria_doc.read_text(encoding="utf-8") == before
 
 
@@ -394,7 +405,30 @@ def test_new_taxonomy_settings_are_editable(client, db):
 
 def test_get_persona_returns_the_shipped_example(client, criteria_doc):
     body = client.get("/api/scoring/persona").json()
-    assert body == {"display_name": "Alex Rivera", "domain_label": "design-leadership"}
+    assert body == {
+        "display_name": "Alex Rivera",
+        "domain_label": "design-leadership",
+        "domain_label_is_default": False,
+    }
+
+
+def test_get_persona_flags_the_neutral_default(client, criteria_doc):
+    """The neutral fallback label is placeholder prose, not user content. It is
+    served flagged so editors render an empty input — prefilling it once let a
+    user append their real answer to it and trip the 120-char persona rail."""
+    # A name-only save writes the literal default string into the doc.
+    client.put(
+        "/api/scoring/persona",
+        json={"display_name": "Sam", "domain_label": "the roles you are searching for"},
+    )
+    body = client.get("/api/scoring/persona").json()
+    assert body["domain_label_is_default"] is True
+    # A real answer clears the flag.
+    client.put(
+        "/api/scoring/persona",
+        json={"display_name": "Sam", "domain_label": "project management"},
+    )
+    assert client.get("/api/scoring/persona").json()["domain_label_is_default"] is False
 
 
 def test_put_persona_round_trips_and_persists(client, criteria_doc):
@@ -403,7 +437,11 @@ def test_put_persona_round_trips_and_persists(client, criteria_doc):
         json={"display_name": "Robin Vega", "domain_label": "data-platform"},
     )
     assert r.status_code == 200
-    assert r.json() == {"display_name": "Robin Vega", "domain_label": "data-platform"}
+    assert r.json() == {
+        "display_name": "Robin Vega",
+        "domain_label": "data-platform",
+        "domain_label_is_default": False,
+    }
     # Persisted to the doc and reflected on a fresh GET.
     again = client.get("/api/scoring/persona").json()
     assert again["display_name"] == "Robin Vega"

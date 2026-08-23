@@ -11,7 +11,7 @@ never ships. Range/length checks belong in each module's own validator, not the
 model-facing schema.
 """
 
-from jshq import jobparse, refine
+from jshq import jobparse, linkedin_titles, refine
 from jshq.scoring import haiku, learned, synthesis
 from jshq.scoring.criteria import load_criteria
 
@@ -55,6 +55,7 @@ def test_all_structured_output_schemas_use_supported_keywords():
     assert_output_schema_supported(synthesis.SCHEMA, "synthesis.SCHEMA")
     assert_output_schema_supported(refine.SCHEMA, "refine.SCHEMA")
     assert_output_schema_supported(learned.SCHEMA, "learned.SCHEMA")
+    assert_output_schema_supported(linkedin_titles.SCHEMA, "linkedin_titles.SCHEMA")
     assert_output_schema_supported(jobparse._LLM_SCHEMA, "jobparse._LLM_SCHEMA")
     # haiku's schema is built from the criteria doc — check both the default
     # shape and the one derived from the live (seeded) criteria.

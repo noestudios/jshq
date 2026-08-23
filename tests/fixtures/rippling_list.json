@@ -1,0 +1,23 @@
+[
+  {
+    "uuid": "65d89c21-65ea-4259-bb9b-db41dcb007d3",
+    "name": "Principal UX Designer",
+    "department": {"id": "Product", "label": "Product"},
+    "url": "https://ats.rippling.com/exampleco/jobs/65d89c21-65ea-4259-bb9b-db41dcb007d3",
+    "workLocation": {"label": "Remote (United States)", "id": "Remote (United States)"}
+  },
+  {
+    "uuid": "77e90d32-76fb-5360-cc0c-ec52edc118e4",
+    "name": "Design Systems Lead",
+    "department": {"id": "Product", "label": "Product"},
+    "url": "https://ats.rippling.com/exampleco/jobs/77e90d32-76fb-5360-cc0c-ec52edc118e4",
+    "workLocation": {"label": "New York, NY", "id": "New York, NY"}
+  },
+  {
+    "uuid": "88fa1e43-87ac-6471-dd1d-fd63fed229f5",
+    "name": "Assistant Construction Manager",
+    "department": {"id": "Field Services", "label": "Field Services"},
+    "url": "https://ats.rippling.com/exampleco/jobs/88fa1e43-87ac-6471-dd1d-fd63fed229f5",
+    "workLocation": {"label": "Remote (United States)", "id": "Remote (United States)"}
+  }
+]

@@ -2,7 +2,7 @@
 
 import json
 
-from jshq.main import app, get_compose_client
+from jshq.main import app, get_analysis_client
 from test_haiku import fake_client
 from test_synthesis import ROADMAP, payload
 
@@ -40,7 +40,7 @@ def test_keyless_prompt_renders_or_422s(client, criteria_doc):
 def test_keyed_propose_parks_a_proposal(client, criteria_doc):
     put_roadmap(client)
     fake, state = fake_client(payload())
-    app.dependency_overrides[get_compose_client] = lambda: fake
+    app.dependency_overrides[get_analysis_client] = lambda: fake
     try:
         r = client.post("/api/scoring/synthesis")
         assert r.status_code == 200, r.text
@@ -49,7 +49,7 @@ def test_keyed_propose_parks_a_proposal(client, criteria_doc):
         assert state["calls"] == 1
         assert client.get("/api/scoring/synthesis").json()["proposal"]["id"] == proposal["id"]
     finally:
-        app.dependency_overrides.pop(get_compose_client, None)
+        app.dependency_overrides.pop(get_analysis_client, None)
 
 
 def test_keyed_propose_is_503_without_a_key(client, criteria_doc):
@@ -68,14 +68,14 @@ def test_keyed_propose_failure_is_502(client, criteria_doc):
             async def create(**kwargs):
                 raise RuntimeError("api melted")
 
-    app.dependency_overrides[get_compose_client] = lambda: Boom()
+    app.dependency_overrides[get_analysis_client] = lambda: Boom()
     try:
         r = client.post("/api/scoring/synthesis")
         assert r.status_code == 502
-        assert "synthesis failed" in r.json()["detail"]
+        assert "[JSHQ-401]" in r.json()["detail"]  # code, not prose — wording is free to change
         assert client.get("/api/scoring/synthesis").json()["proposal"] is None
     finally:
-        app.dependency_overrides.pop(get_compose_client, None)
+        app.dependency_overrides.pop(get_analysis_client, None)
 
 
 def test_paste_back_validates_and_parks(client, criteria_doc):

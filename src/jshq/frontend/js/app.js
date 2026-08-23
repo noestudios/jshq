@@ -182,9 +182,11 @@ async function checkStaleRefresh() {
 }
 
 function pollUntilRefreshed() {
+  let misses = 0;
   const timer = setInterval(async () => {
     try {
       const status = await api.refreshStatus();
+      misses = 0;
       if (!status.running) {
         clearInterval(timer);
         toast("Job boards refreshed");
@@ -193,7 +195,9 @@ function pollUntilRefreshed() {
         if (currentRoute() === "jobs" || currentRoute() === "today") render();
       }
     } catch {
-      clearInterval(timer);
+      // Tolerate blips before giving up. This is the load-time background
+      // watcher, so the give-up stays quiet — the user never asked for it.
+      if (++misses >= 3) clearInterval(timer);
     }
   }, 5000);
 }

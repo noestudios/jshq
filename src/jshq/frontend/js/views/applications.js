@@ -4,6 +4,7 @@
 
 import { api } from "../api.js";
 import { openComposeModal } from "../lib/composeModal.js";
+import { humanizeApiError } from "../lib/errors.js";
 import {
   activityTimelineHtml,
   fmtReminderDue,
@@ -105,6 +106,11 @@ const state = {
   tailoringCache: new Map(), // app.id -> tailoring | null (none); absent = loading
   tailorChatCache: new Map(), // tailoring.id -> messages[]; regenerate = new id = fresh thread
   tailorBusy: null, // { id, kind: "generate" | "apply" | "rerender" | "refine" | "chat" } while a call is in flight
+  // Sections whose lazy load failed ("files:<appId>" | "tailoring:<appId>" |
+  // "chat:<tailoringId>"). A failed load used to leave its section on
+  // "Loading…" forever with no signal; these keys swap that for an inline
+  // retry line. Cleared by the retry itself (the loader re-adds on failure).
+  loadFailed: new Set(),
   filters: { q: "", sortBy: "", status: new Set() },
   mobileDetail: false,
   listScroll: 0,
@@ -201,7 +207,7 @@ function listRow(app) {
         <div class="co-row-rest">
           <div class="company-row-head">
             <span class="company-name">${fitChip(app)}${esc(app.job_title)}</span>
-            ${app.applied_date ? `<span class="company-loc" title="${esc(fmtFullDate(app.applied_date))}">applied ${esc(fmtDue(app.applied_date))}</span>` : ""}
+            ${app.applied_date ? `<span class="company-loc" title="${esc(fmtFullDate(app.applied_date))}">${esc(fmtDue(app.applied_date))}</span>` : ""}
           </div>
           <div class="company-meta">
             <span class="job-company">${esc(app.company_name)}</span>
@@ -299,7 +305,13 @@ function tailorChatHtml(t, busy) {
   return `
     <div class="tailor-chat">
       <span class="field-label">Refine with the agent</span>
-      ${messages === undefined ? emptyState("Loading thread…") : messages.map(tailorChatMsgHtml).join("")}
+      ${
+        messages === undefined
+          ? state.loadFailed.has(`chat:${t.id}`)
+            ? loadErrorHtml("retry-chat")
+            : emptyState("Loading thread…")
+          : messages.map(tailorChatMsgHtml).join("")
+      }
       ${busy === "chat" ? `<div class="tailor-chat-msg tailor-chat-assistant tailor-chat-thinking">${SPINNER}Thinking…</div>` : ""}
       <div class="tailor-chat-composer">
         <textarea class="notes-area" data-tailor-chat-input rows="2"
@@ -379,7 +391,9 @@ function tailoringSection(app) {
   if (busy === "generate") {
     body = `<p class="tailor-analysis tailor-generating">${SPINNER}<span>Generating change plan + cover letter… (this can take up to a minute)</span></p>`;
   } else if (t === undefined) {
-    body = emptyState("Loading…");
+    body = state.loadFailed.has(`tailoring:${app.id}`)
+      ? loadErrorHtml("retry-tailoring")
+      : emptyState("Loading…");
   } else if (t === null) {
     body = `
       <div class="tailor-start">
@@ -505,7 +519,9 @@ function fmtBytes(n) {
 function documentsSection(app) {
   const files = state.filesCache.get(app.id);
   const rows = files === undefined
-    ? emptyState("Loading…")
+    ? state.loadFailed.has(`files:${app.id}`)
+      ? loadErrorHtml("retry-files")
+      : emptyState("Loading…")
     : files.length === 0
       ? emptyState("No documents yet — attach the resume you actually sent.")
       : files.map((f) => `
@@ -544,12 +560,22 @@ async function loadActivities(app) {
   if (state.selectedId === app.id) paint();
 }
 
+/* The inline surface for a failed lazy section load — the section used to sit
+   on "Loading…" forever with nothing to click (error-audit F6). */
+function loadErrorHtml(action) {
+  return emptyState(
+    `Couldn't load this section. <button type="button" class="btn btn-ghost" data-action="${action}">Retry</button>`,
+    { html: true }
+  );
+}
+
 async function loadFiles(app, { force = false } = {}) {
   if (!force && state.filesCache.has(app.id)) return;
+  state.loadFailed.delete(`files:${app.id}`);
   try {
     state.filesCache.set(app.id, await api.listApplicationFiles(app.id));
   } catch {
-    return; // section stays on Loading…; reselect retries
+    state.loadFailed.add(`files:${app.id}`); // renders the retry line
   }
   if (state.selectedId === app.id) paint();
 }
@@ -559,11 +585,12 @@ async function loadTailoring(app) {
     loadTailorChat(app, state.tailoringCache.get(app.id));
     return;
   }
+  state.loadFailed.delete(`tailoring:${app.id}`);
   try {
     state.tailoringCache.set(app.id, await api.getTailoring(app.id));
   } catch (error) {
-    if (error.status !== 404) return; // section stays on Loading…; reselect retries
-    state.tailoringCache.set(app.id, null);
+    if (error.status !== 404) state.loadFailed.add(`tailoring:${app.id}`); // retry line
+    else state.tailoringCache.set(app.id, null);
   }
   if (state.selectedId === app.id) paint();
   loadTailorChat(app, state.tailoringCache.get(app.id));
@@ -573,10 +600,11 @@ async function loadTailoring(app) {
    the DB but never show it (the owner's 7f decision — the applied view stays clean). */
 async function loadTailorChat(app, t) {
   if (!t || t.status !== "pending" || state.tailorChatCache.has(t.id)) return;
+  state.loadFailed.delete(`chat:${t.id}`);
   try {
     state.tailorChatCache.set(t.id, await api.getTailoringMessages(t.id));
   } catch {
-    return; // thread stays on Loading…; reselect retries
+    state.loadFailed.add(`chat:${t.id}`); // renders the retry line
   }
   if (state.selectedId === app.id) paint();
 }
@@ -882,6 +910,9 @@ function repaintList() {
 
 let saveTimer = null;
 let tailorSaveTimer = null;
+// One toast per failure streak for the debounced cover-letter autosave — it
+// fires every 700ms while typing, so a down server must not toast per save.
+let tailorAutosaveFailed = false;
 
 async function save(app, overrides, { quiet = false } = {}) {
   try {
@@ -1022,6 +1053,28 @@ function onClick(event) {
     case "doc-delete":
       deleteDocument(target.dataset.name);
       break;
+    case "retry-files": {
+      const app = selected();
+      if (!app) break;
+      loadFiles(app, { force: true }); // clears the failed flag synchronously
+      paint(); // back to "Loading…" while the retry is in flight
+      break;
+    }
+    case "retry-tailoring": {
+      const app = selected();
+      if (!app) break;
+      loadTailoring(app);
+      paint();
+      break;
+    }
+    case "retry-chat": {
+      const app = selected();
+      const t = app && state.tailoringCache.get(app.id);
+      if (!t) break;
+      loadTailorChat(app, t);
+      paint();
+      break;
+    }
     case "rem-suggestion":
       onReminderSuggestion(target.dataset.key, target.dataset.verb);
       break;
@@ -1185,7 +1238,7 @@ async function uploadDocument(input) {
     const stored = await api.uploadApplicationFile(app.id, file);
     toast(`Added ${stored.name}`);
   } catch (error) {
-    toast(error.message || "Upload failed");
+    toast(humanizeApiError(error, "Couldn't add the file."), { error: true });
     return;
   }
   loadFiles(app, { force: true });
@@ -1198,7 +1251,7 @@ async function deleteDocument(name) {
     await api.deleteApplicationFile(app.id, name);
     toast(`Removed ${name}`);
   } catch (error) {
-    toast(error.message || "Delete failed");
+    toast(humanizeApiError(error, "Couldn't remove the file."), { error: true });
     return;
   }
   loadFiles(app, { force: true });
@@ -1253,8 +1306,21 @@ function onInput(event) {
     tailorSaveTimer = setTimeout(() => {
       api
         .patchTailoring(t.id, { cover_letter: element.value })
-        .then((updated) => state.tailoringCache.set(app.id, updated))
-        .catch(() => {}); // the focusout/apply-flush path retries and surfaces errors
+        .then((updated) => {
+          state.tailoringCache.set(app.id, updated);
+          tailorAutosaveFailed = false;
+        })
+        .catch((error) => {
+          // Never silent (F6): iOS often never blurs, so the focusout path
+          // this used to defer to may never run — a swallowed failure here
+          // was quiet data loss. The edit stays in the textarea; saving
+          // retries on further typing and on focusout.
+          if (tailorAutosaveFailed) return;
+          tailorAutosaveFailed = true;
+          toast(humanizeApiError(error, "Couldn't save the cover letter — your edit is still in the box."), {
+            error: true,
+          });
+        });
     }, 700);
     return;
   }

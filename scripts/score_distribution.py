@@ -50,7 +50,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv  # noqa: E402
 
-from jshq import db, usage  # noqa: E402
+from jshq import aicfg, db, usage  # noqa: E402
 from jshq.scoring import (  # noqa: E402
     POSITIVE_FIT,
     SCORE_CONCURRENCY,
@@ -480,11 +480,11 @@ async def run(limit: int | None, ids: list[int] | None, dump: str | None,
                 if value:
                     acc[field] = acc.get(field, 0) + value
     if acc:
-        cost = usage.cost_of(haiku.MODEL, acc)
+        cost = usage.cost_of(aicfg.DEFAULTS["scoring"], acc)
         print(f"\ncost: ${cost:.4f} over {calls} calls "
               f"({acc.get('output_tokens', 0) // max(1, calls)} output tokens/call)")
         ledger = usage.append_harness_ledger(
-            "score_distribution", haiku.MODEL, acc, calls=calls, cost=cost,
+            "score_distribution", aicfg.DEFAULTS["scoring"], acc, calls=calls, cost=cost,
             args=" ".join(sys.argv[1:]),
         )
         print(f"spend appended to {ledger} (the DB ledger never sees harness runs)")

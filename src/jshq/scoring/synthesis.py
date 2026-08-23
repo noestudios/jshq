@@ -22,11 +22,9 @@ import json
 import uuid
 from datetime import datetime, timezone
 
-from jshq import compose
+from jshq import aicfg
 from .criteria import Criteria, render_tier2
 from .rules import _get_json, _put_json
-
-MODEL = compose.MODEL  # claude-sonnet-5
 MAX_TOKENS = 4096  # quadrants + rubric + refinements; tailor's 8192 is the ceiling
 REPLY_MAX_BYTES = 64 * 1024  # paste-back guard; a valid reply is far smaller
 
@@ -482,16 +480,17 @@ def render_prose(data: dict, criteria: Criteria, *, will_have_craft: bool) -> st
 # ---------------------------------------------------------------- the call
 
 
-async def propose(client, system: str, user: str, tier2_count: int) -> tuple[dict, list]:
-    """One Sonnet call plus one corrective retry. Returns (validated payload,
+async def propose(client, system: str, user: str, tier2_count: int, model: str | None = None) -> tuple[dict, list]:
+    """One model call plus one corrective retry. Returns (validated payload,
     per-attempt usages). Raises SynthesisError carrying the usages."""
+    model = model or aicfg.DEFAULTS["synthesis"]
     last_exc: Exception | None = None
     usages: list = []
     for _ in range(2):
         resp = await client.messages.create(
-            model=MODEL,
+            model=model,
             max_tokens=MAX_TOKENS,
-            thinking=compose.THINKING,
+            **aicfg.thinking_kwargs(model),
             system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
             messages=[{"role": "user", "content": user}],
             output_config={"format": {"type": "json_schema", "schema": SCHEMA}},

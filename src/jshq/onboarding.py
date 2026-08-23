@@ -54,7 +54,10 @@ def write_roadmap(data: dict) -> dict:
 
 
 def build_readiness(
-    company_count: int, api_key_declined: bool = False, api_key_rejected: bool = False
+    company_count: int,
+    api_key_declined: bool = False,
+    api_key_rejected: bool = False,
+    compat_configured: bool = False,
 ) -> dict:
     """Which setup steps are done, derived from the live config (no separate
     'completed' bookkeeping): anything a blank-slate install has NOT yet touched
@@ -62,7 +65,7 @@ def build_readiness(
     not-done and surfaces the error rather than raising — this is labeling, and it
     must never take the app down (scoring still fails loud on the same doc).
 
-    api_key_declined is the user's explicit "I don't want to use an API key"
+    api_key_declined is the user's explicit "I don't want to use AI"
     choice: keyless is a first-class supported mode, so declining completes the
     api_key step the same as configuring one would. Without it a keyless-by-choice
     user is stranded below 100% forever, with no reachable control to finish.
@@ -70,7 +73,12 @@ def build_readiness(
     api_key_rejected is set when the currently-configured key last tested 401: a
     saved-but-rejected key is present but useless, so it must NOT complete the
     step or imply scoring is live (#33). A decline still wins — keyless is a
-    valid finished state regardless of any stale verdict."""
+    valid finished state regardless of any stale verdict.
+
+    compat_configured widens the step to "AI is decided": a configured
+    OpenAI-compatible endpoint turns AI on without any Anthropic key, so it
+    completes the step the same way a working key does — including when a
+    stale rejected key is also lying around."""
     roadmap = read_roadmap()
     criteria_error = None
     field_done = hard_filters_done = wishlist_done = False
@@ -101,7 +109,11 @@ def build_readiness(
     # neither has a wizard step to satisfy — counting them would strand a user
     # below 100% with no way to finish from the flow. The field step covers the
     # profile; the voice guide stays discoverable in Settings → System.
-    api_key_done = api_key_declined or (apikey.is_configured() and not api_key_rejected)
+    api_key_done = (
+        api_key_declined
+        or compat_configured
+        or (apikey.is_configured() and not api_key_rejected)
+    )
     steps = {
         "company": {"done": company_count > 0, "required": True},
         "api_key": {"done": api_key_done, "rejected": api_key_rejected},

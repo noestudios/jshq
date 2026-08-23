@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from jshq import compose
+from jshq import aicfg, compose
 from jshq.main import app, get_compose_client
 
 
@@ -165,9 +165,9 @@ def test_compose_job_happy_path(compose_client, db, seed_job):
     assert resp.status_code == 200
     payload = resp.json()
     assert payload["draft"] == "Hi, thanks for the time today."  # em dash swept from output
-    assert payload["model"] == compose.MODEL
+    assert payload["model"] == aicfg.DEFAULTS["compose"]
     assert state["calls"] == 1
-    assert state["kwargs"]["model"] == compose.MODEL
+    assert state["kwargs"]["model"] == aicfg.DEFAULTS["compose"]
     row = db.execute(
         "SELECT * FROM activities WHERE id = ?", (payload["activity_id"],)
     ).fetchone()
@@ -177,7 +177,7 @@ def test_compose_job_happy_path(compose_client, db, seed_job):
     logged = json.loads(row["content"])
     assert logged["intent"] == "thank_you"
     assert logged["draft"] == payload["draft"]
-    assert logged["model"] == compose.MODEL
+    assert logged["model"] == aicfg.DEFAULTS["compose"]
 
 
 def test_compose_records_sonnet_spend(client, db, seed_job):
@@ -201,12 +201,12 @@ def test_compose_records_sonnet_spend(client, db, seed_job):
 
     from jshq.usage import cost_of, read_usage_totals
 
-    sonnet = read_usage_totals(db)["by_model"][compose.MODEL]
+    sonnet = read_usage_totals(db)["by_model"][aicfg.DEFAULTS["compose"]]
     assert sonnet["calls"] == 1
     assert (sonnet["input"], sonnet["output"]) == (1000, 500)
     # Priced at the model's rate for today — compute it rather than pin a literal
     # (Sonnet 5 is $2/$10 during the intro window, $3/$15 from 2026-09-01).
-    assert sonnet["cost"] == round(cost_of(compose.MODEL, usage), 6)
+    assert sonnet["cost"] == round(cost_of(aicfg.DEFAULTS["compose"], usage), 6)
 
 
 def test_compose_contact_happy_path(compose_client, seed_contact):
@@ -284,7 +284,7 @@ def test_compose_502_on_model_error_logs_nothing(client, db, seed_job):
     app.dependency_overrides[get_compose_client] = lambda: fake
     resp = client.post("/api/compose", json=job_body(seed_job()))
     assert resp.status_code == 502
-    assert "draft generation failed" in resp.json()["detail"]
+    assert "[JSHQ-501]" in resp.json()["detail"]  # code, not prose — wording is free to change
     rows = db.execute("SELECT 1 FROM activities WHERE type = 'compose'").fetchall()
     assert rows == []
 

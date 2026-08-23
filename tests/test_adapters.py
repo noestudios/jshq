@@ -19,7 +19,10 @@ from jshq.ats.adapters import (
     icims,
     lever,
     oracle_hcm,
+    recruitee,
+    rippling,
     smartrecruiters,
+    workable,
     workday,
 )
 from jshq.ats.normalize import AdapterError, compile_title_filter
@@ -769,3 +772,126 @@ def test_atlassian_bad_shape_raises():
 
     with pytest.raises(AdapterError):
         run_fetch(handler_empty, atlassian.fetch, "www.atlassian.com")
+
+
+# --- recruitee ---
+
+
+def test_recruitee_maps_and_filters():
+    def handler(request):
+        assert request.url.path == "/api/offers/"
+        return httpx.Response(200, content=fixture_bytes("recruitee_offers.json"))
+
+    jobs = run_fetch(handler, recruitee.fetch, "exampleco")
+    # design roles kept; the risk officer is filtered out
+    assert [j.title for j in jobs] == ["Director of Product Design", "UX Researcher"]
+
+    j = jobs[0]
+    assert j.external_id == "2704001"
+    assert j.url == "https://careers.exampleco.com/o/director-of-product-design"
+    assert j.location == "Remote, United States"
+    assert j.remote_type == "remote"  # structured `remote` boolean
+    # description + the separate `requirements` block both feed the JD text
+    assert "Lead our design org" in j.description_text
+    assert "10+ years in product design" in j.description_text
+    assert "<" not in j.description_text
+    assert (j.salary_min, j.salary_max, j.salary_stated) == (180000, 220000, True)
+
+    # hybrid boolean maps even when the location text doesn't say so
+    assert jobs[1].remote_type == "hybrid"
+    assert (jobs[1].salary_min, jobs[1].salary_max, jobs[1].salary_stated) == (
+        None, None, False,
+    )
+
+
+def test_recruitee_http_error_raises():
+    def handler(request):
+        return httpx.Response(404, json={"error": "Not Found"})
+
+    with pytest.raises(AdapterError):
+        run_fetch(handler, recruitee.fetch, "exampleco")
+
+
+# --- workable ---
+
+
+def test_workable_maps_and_filters():
+    def handler(request):
+        assert request.url.path == "/api/v1/widget/accounts/exampleco"
+        assert request.url.params.get("details") == "true"
+        return httpx.Response(200, content=fixture_bytes("workable_widget.json"))
+
+    jobs = run_fetch(handler, workable.fetch, "exampleco")
+    # the designer is kept; the business director is filtered out
+    assert [j.title for j in jobs] == ["Senior Product Designer"]
+
+    j = jobs[0]
+    assert j.external_id == "A755C605B8"
+    assert j.url == "https://apply.workable.com/j/A755C605B8"
+    # empty city/state fall out of the joined location
+    assert j.location == "United States"
+    assert j.remote_type == "remote"  # telecommuting flag
+    assert "Design end to end" in j.description_text
+    assert "<" not in j.description_text
+    assert (j.salary_min, j.salary_max, j.salary_stated) == (150000, 190000, True)
+
+
+def test_workable_http_error_raises():
+    def handler(request):
+        return httpx.Response(503)
+
+    with pytest.raises(AdapterError):
+        run_fetch(handler, workable.fetch, "exampleco")
+
+
+# --- rippling ---
+
+
+def test_rippling_two_phase_and_unlisted_skip():
+    """List carries no descriptions; title-filter the list, fetch details only
+    for matches, and skip details flagged unlistedFromSearch."""
+    listed_uuid = "65d89c21-65ea-4259-bb9b-db41dcb007d3"
+    unlisted_uuid = "77e90d32-76fb-5360-cc0c-ec52edc118e4"
+    detail_calls = []
+
+    def handler(request):
+        path = request.url.path
+        if path == "/platform/api/ats/v1/board/exampleco/jobs":
+            return httpx.Response(200, content=fixture_bytes("rippling_list.json"))
+        if path.endswith(f"/jobs/{listed_uuid}"):
+            detail_calls.append(path)
+            return httpx.Response(200, content=fixture_bytes("rippling_detail.json"))
+        if path.endswith(f"/jobs/{unlisted_uuid}"):
+            detail_calls.append(path)
+            return httpx.Response(200, json={
+                "uuid": unlisted_uuid, "name": "Design Systems Lead",
+                "unlistedFromSearch": True,
+                "workLocations": ["New York, NY"],
+                "description": {"company": "<p>x</p>", "role": "<p>y</p>"},
+            })
+        return httpx.Response(404)
+
+    jobs = run_fetch(handler, rippling.fetch, "exampleco")
+    # two titles matched -> two detail fetches; the construction manager got none
+    assert len(detail_calls) == 2
+    # the unlisted match is dropped after its detail read
+    assert [j.title for j in jobs] == ["Principal UX Designer"]
+
+    j = jobs[0]
+    assert j.external_id == listed_uuid
+    assert j.url == f"https://ats.rippling.com/exampleco/jobs/{listed_uuid}"
+    assert j.location == "Remote (United States)"  # detail workLocations
+    assert j.remote_type == "remote"
+    # description dict sections joined: company blurb then role
+    assert "ExampleCo builds infrastructure" in j.description_text
+    assert "Own the design system" in j.description_text
+    assert "<" not in j.description_text
+    assert (j.salary_min, j.salary_max, j.salary_stated) == (170000, 210000, True)
+
+
+def test_rippling_http_error_raises():
+    def handler(request):
+        return httpx.Response(502)
+
+    with pytest.raises(AdapterError):
+        run_fetch(handler, rippling.fetch, "exampleco")

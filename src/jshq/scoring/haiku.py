@@ -16,6 +16,7 @@ differed richly. The judgement was there; the number discarded it.
 import json
 from collections.abc import Mapping
 
+from jshq import aicfg
 from .criteria import (
     LEGACY_CRAFT_CRITERION,
     LEGACY_NO_NEGATIVE_CRITERIA,
@@ -25,7 +26,6 @@ from .criteria import (
     CriteriaError,
 )
 
-MODEL = "claude-haiku-4-5"
 # 1024 was sized for one score plus prose notes. Eleven sub-scores with quoted
 # evidence run ~520 typical / ~750 worst case; under structured outputs a
 # truncation is a parse failure, which costs a full retry call, so headroom is
@@ -469,8 +469,11 @@ def _parse(resp, criteria: Criteria | None = None) -> dict:
     return data
 
 
-async def score_job(client, system: str, job: Mapping, criteria: Criteria | None = None):
-    """One Haiku call (plus one retry on unusable output). Returns
+async def score_job(
+    client, system: str, job: Mapping, criteria: Criteria | None = None,
+    model: str | None = None,
+):
+    """One scoring call (plus one retry on unusable output). Returns
     (data, usage) — usage is the response's usage object (or None if the fake
     client / SDK omits it), for cost accounting by the caller. Raises ScoringError.
 
@@ -486,14 +489,20 @@ async def score_job(client, system: str, job: Mapping, criteria: Criteria | None
     with 2 tier2 entries and narrates the other nine in scoring_notes, four
     identical failures across two invocations (and the schema cannot pin the
     array length: structured outputs reject minItems > 1). First attempts stay
-    at temp 0 for run-to-run stability; only the already-failed path varies."""
+    at temp 0 for run-to-run stability; only the already-failed path varies.
+    On models that reject sampling params (aicfg.temperature_kwargs) both
+    attempts omit temperature — the warm retry degrades to a plain retry."""
+    model = model or aicfg.DEFAULTS["scoring"]
     last_exc: Exception | None = None
     usages: list = []
     for attempt in range(2):
         resp = await client.messages.create(
-            model=MODEL,
+            model=model,
             max_tokens=MAX_TOKENS,
-            temperature=TEMPERATURE if attempt == 0 else RETRY_TEMPERATURE,
+            **aicfg.thinking_kwargs(model),
+            **aicfg.temperature_kwargs(
+                model, TEMPERATURE if attempt == 0 else RETRY_TEMPERATURE
+            ),
             # cache_control: free win if the criteria prose ever clears Haiku's
             # 4096-token cache minimum; harmless below it.
             system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],

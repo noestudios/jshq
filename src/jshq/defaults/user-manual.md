@@ -1,6 +1,6 @@
 Job Search HQ is your private command center for the job hunt. It watches the companies you care about, pulls in their new openings, scores each one against what you actually want, and keeps your applications, contacts, reminders, and tailored resumes in one place. It runs only on your own network, and it never sends anything for you. Every email and application goes out only when you send it.
 
-New here? The first launch opens a short **setup wizard**: your API key, your field, hard limits, two reflection exercises, and the first company to watch. Everything is skippable except that one company. You can leave any time with **Exit setup**: a **Setup N/6** pill stays in the top bar and reopens a welcome-back hub with per-step jump buttons until all six steps are done. After setup, start on the **Today** tab, click any job to open its details, and come back to **Help** (this page) whenever something isn't clear.
+New here? The first launch opens a short **setup wizard**: your AI provider, your field, hard limits, two reflection exercises, and the first company to watch. Everything is skippable except that one company. You can leave any time with **Exit setup**: a **Setup N/6** pill stays in the top bar and reopens a welcome-back hub with per-step jump buttons until all six steps are done. After setup, start on the **Today** tab, click any job to open its details, and come back to **Help** (this page) whenever something isn't clear.
 
 # The tabs
 
@@ -22,7 +22,7 @@ Everything in the app lives in the row of tabs across the top:
 3. Clear anything **due** (follow-ups, thank-you notes, interview prep) with **Done** or **Snooze**.
 4. Glance at the top of Today for **alerts** (see "Staying current" below).
 
-You don't have to fetch anything by hand once `jshq refresh` is scheduled (the README shows how). Each run checks every tracked board; the **Refresh** control in Settings → System does the same on demand.
+You don't have to fetch anything by hand once the schedule is on: run `jshq schedule --install` once, or use **Settings → System → Scheduling** (the setup wizard offers the same thing at the end). Each `jshq refresh` run checks every tracked board; the **Refresh** control in Settings → System does the same on demand.
 
 # What gets pulled in
 
@@ -76,7 +76,7 @@ One nuance worth knowing: **"unknown" never rejects.** A posting with no salary 
 
 - **Open roles**: a live count, kept up to date automatically.
 - **Connection status**: whether the app can still read that company's openings. Watch for **"stale"**: it looks connected, but the list hasn't updated in a while or came back empty, so it's worth checking by hand. **"no ATS"** means the app couldn't read that company automatically. Fixing or adding its careers URL gets it re-checked on save (there's also a **Check again** button in Company settings), and until it connects you'll need to check its careers page yourself.
-- **LinkedIn role checks**: one-click searches for the titles you're watching there. Add a title and its search link appears.
+- **LinkedIn role checks**: one-click searches for the titles you're watching there. Add a title and its search link appears. New companies start from the default title list in Settings → Sourcing; each company's own list is still edited right here.
 - **Top jobs**: that company's most promising openings, listed right on its page.
 - **Your notes**: a priority from 1 to 5 and a values-fit read.
 
@@ -113,9 +113,13 @@ Text supports `**bold**`, `*italic*`, and `[links](https://…)`. If the file ha
 
 # AI features and your own key
 
-Fit scoring, resume and cover-letter tailoring, message drafting, and URL parsing for **+ Add job** all run on Anthropic's API **with your own key**. The app has no server and no account of its own. Add a key in **Settings → System** (there's a test button); usage is billed to your key, and the System tab tracks what each feature has spent.
+Fit scoring, resume and cover-letter tailoring, message drafting, and URL parsing for **+ Add job** all run on an AI provider **you configure**: Anthropic's API with your own key, or any OpenAI-compatible endpoint you choose. The app has no server and no account of its own. Choose your provider in the **Settings → System → AI** section or on the wizard's Turn-on-AI step (each setup has a test button); switching keeps both configurations saved. Anthropic usage is billed to your key, and the System tab tracks what each feature has spent.
 
-**Without a key, nothing breaks**: jobs still pull in and everything manual works, but nothing gets a fit score (rows show a dash) and the drafting features explain what's missing instead of running. Add a key later and run **Rescore** to score what accumulated.
+**Without a key or endpoint, nothing breaks**: jobs still pull in and everything manual works, but nothing gets a fit score (rows show a dash) and the drafting features explain what's missing instead of running. Add one later and run **Rescore** to score what accumulated.
+
+**Choosing models** (Settings → System → AI models): each kind of work picks a provider and model. The **analysis** work covers job scoring, pasted-URL parsing, criteria synthesis, and rule and title proposals; the **writing** work covers message drafts, resume tailoring, and the AI-tell scrub. The default keeps each task on its shipped Claude tier, which is also what scoring is calibrated on; pick anything else for analysis and Settings will note that scores may sit on a different scale. Costlier models spend more per call; the spend line underneath shows where the money went.
+
+**Your own endpoint** (pick **Your endpoint** in Settings → System → AI, or on the wizard's Turn-on-AI step): run the AI work on an OpenAI-compatible server instead of Anthropic. That covers local runtimes (Ollama, LM Studio, llama.cpp server, vLLM) and hosted providers that speak the same format. Save the base URL (for Ollama that's `http://localhost:11434/v1`), add an API key only if the server wants one, and press **Test** to check it and list the models it serves; then type the model id (one for everything, or route analysis and writing separately under **Advanced**). A localhost endpoint keeps everything on your machine and its usage shows as **local** (genuinely free) in the spend line; other endpoints show as **unpriced** because the app doesn't know their rates. Quality varies by model, especially for scoring and structured tasks; small local models may fail more often, and the app retries and then says so rather than crashing. One Ollama-specific caveat: its default context window is 4,096 tokens, and anything past it is truncated silently, so a long criteria document plus a long posting can quietly lose its tail. If you score with Ollama, raise the limit (for example `OLLAMA_CONTEXT_LENGTH=8192` in the environment that starts the server).
 
 # Reminders and the calendar
 
@@ -137,13 +141,59 @@ The **search box** matches a job's title, company, or location, with two shortcu
 
 # Staying current
 
-- **Refresh.** Job boards are re-checked on every `jshq refresh` run. Schedule it twice a day (the README shows how) and the app stays current on its own. While a pull is running, a green **"Refreshing job boards…"** bar appears at the top of Today, followed by a short summary when it finishes.
+- **Refresh.** Job boards are re-checked on every `jshq refresh` run. Turn on the schedule (see "Scheduling" below) and the app stays current on its own, twice a day by default. While a pull is running, a green **"Refreshing job boards…"** bar appears at the top of Today, followed by a short summary when it finishes.
 - **Stale alert (amber).** The listings haven't updated in a while; the app re-checks on its own, so usually there's nothing to do.
 - **Offline alert (red).** The app couldn't reach the job boards at all, often because the computer was asleep or offline. Click **Retry now** once you're back online.
-- **Other alerts.** A company whose jobs stopped loading, or a backup that looks old, each shows its own banner with a link to where you can look. Backups run nightly once you've scheduled `jshq backup` (the README shows how); the banner tells you when the last one succeeded.
+- **Other alerts.** A company whose jobs stopped loading, or a backup that looks old, each shows its own banner with a link to where you can look. Backups run nightly once the schedule is on; the banner tells you when the last one succeeded.
 
 You can dismiss any of these banners; it stays hidden until your next browser session.
+
+# Scheduling
+
+The refresh and the nightly backup run themselves once you turn the schedule on, any of three ways: tick "Keep this fresh automatically" at the end of the setup wizard, click **Install** in **Settings → System → Scheduling**, or run `jshq schedule --install` in a terminal. All three write the same native scheduler entries on your machine (launchd on macOS, cron on Linux, Task Scheduler on Windows); nothing is sent anywhere.
+
+The defaults are refresh at 10:00 and 16:00 and backup at 02:00. Edit the comma-separated times in Settings and click **Apply**; add more times for extra refreshes a day. **Remove** (or `jshq schedule --uninstall`) takes the entries out again, and `jshq schedule --status` shows what's installed. If your system has no supported scheduler, the app says so and the README documents the manual setup instead.
 
 # How scoring works, in detail
 
 To see the exact rubric the scorer follows (in plain English, with your current settings), open **Jobs**, click the **Fit** filter, and choose **How scoring works**. That viewer is read-only; to change anything, use **Settings → Scoring** as described above.
+
+<!-- error-codes:start (generated from src/jshq/errors.py by scripts/gen_error_appendix.py; do not hand-edit) -->
+# Error codes
+
+Error messages in the app end with a code like [JSHQ-501]. The code
+names the exact failure point, so a screenshot or a copied line is
+enough to pin down what happened even after wording changes. What
+each code means:
+
+- **JSHQ-001** A request failed field validation. The message lists each field with what it needs.
+- **JSHQ-101** The company a form referenced was deleted in the meantime. Reload the view and pick again.
+- **JSHQ-102** The job a form referenced was deleted in the meantime. Reload the view and pick again.
+- **JSHQ-103** Each job carries at most one application. The board resyncs to show the existing one.
+- **JSHQ-104** The job, company, contact, or application an action referenced was deleted in the meantime. Reload the view.
+- **JSHQ-201** The Suggest-with-AI call for LinkedIn title defaults did not complete. The server log has the underlying error.
+- **JSHQ-202** Sourcing rules have no location exclusion list. A town allowlist (an include rule) is the only location mechanism.
+- **JSHQ-203** Application files need a plain file name (no folders, no reserved device names, no trailing dot or space) with a supported extension.
+- **JSHQ-204** The voice guide is prose the AI writes with; trim it below 200 KB and save again.
+- **JSHQ-205** The Anthropic model controls accept only the app's curated model list, so every Anthropic choice has known pricing and request behavior. The OpenAI-compatible endpoint takes a free-text model id instead.
+- **JSHQ-206** The OpenAI-compatible endpoint has no curated model list; a task pointed at it needs a model id typed in (the endpoint's Test button lists what it serves).
+- **JSHQ-207** A task can only point at the OpenAI-compatible endpoint after its base URL is saved; configure the endpoint, then pick it for a task.
+- **JSHQ-208** The endpoint base URL failed validation; nothing was saved. Check for typos, a missing scheme, or stray spaces.
+- **JSHQ-209** A scheduled time failed validation and nothing was saved. Times are 24-hour HH:MM (16:30, not 4:30 PM), and refresh and backup each need at least one.
+- **JSHQ-210** This system has no scheduler the app knows how to write to (launchd, cron, or Task Scheduler). Point your own scheduler at jshq refresh and jshq backup instead; the README shows how.
+- **JSHQ-211** Writing the OS scheduler entry failed (the message carries what the scheduler said). The saved times are unchanged; fix the underlying issue and try Install again, or schedule by hand per the README.
+- **JSHQ-301** The scoring-rule proposal call for a job did not complete. The server log has the underlying error.
+- **JSHQ-302** The criteria doc (or an edit to it) failed validation and the doc on disk was left untouched. The message names the exact block and rule.
+- **JSHQ-303** The persona (display name or role description) failed the doc's validation rails; the doc was left untouched.
+- **JSHQ-304** The stated field/discipline failed the taxonomy write's validation; the doc was left untouched.
+- **JSHQ-305** The offline US place table had no match for the typed town. Only US places resolve; a state abbreviation helps.
+- **JSHQ-306** The suggestion an action targeted is no longer pending (acted on elsewhere, or superseded by a newer refresh).
+- **JSHQ-307** The scoring-rule proposal an action targeted is no longer pending (acted on elsewhere, or replaced by a newer proposal).
+- **JSHQ-401** Draft with AI (Settings, Scoring) did not complete. The copy-prompt route still works without a key. The server log has the underlying error.
+- **JSHQ-501** The compose call (outreach drafts, answers) did not complete. The server log has the underlying error.
+- **JSHQ-502** The AI-tell refine call did not complete. The draft is unchanged. The server log has the underlying error.
+- **JSHQ-503** The tailoring generation call did not complete. Nothing was saved. The server log has the underlying error.
+- **JSHQ-504** A tailoring chat turn did not complete. The pending tailoring is unchanged. The server log has the underlying error.
+- **JSHQ-505** Each application carries at most one pending tailoring. Apply or discard the pending one first.
+- **JSHQ-506** Tailoring reads the job description. Add the description text on the job's detail pane, then tailor again.
+<!-- error-codes:end -->

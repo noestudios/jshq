@@ -5,7 +5,7 @@ Hermetic: fake Anthropic client (structured JSON), no live API."""
 import json
 from types import SimpleNamespace
 
-from jshq import compose, refine
+from jshq import aicfg, compose, refine
 from jshq.main import app, get_compose_client
 
 EM_DASH = "—"
@@ -64,7 +64,7 @@ def test_refine_endpoint_returns_and_records_spend(client, db):
 
     from jshq.usage import read_usage_totals
 
-    assert read_usage_totals(db)["by_model"][refine.MODEL]["calls"] == 1
+    assert read_usage_totals(db)["by_model"][aicfg.DEFAULTS["refine"]]["calls"] == 1
 
 
 def test_refine_empty_text_422(client):

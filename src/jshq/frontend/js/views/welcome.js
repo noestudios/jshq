@@ -88,6 +88,14 @@ function initState() {
     apiKeyDeclined: false, // "I don't want a key" — completes the api_key step
     keyResult: null, // null | "testing" | {ok, error}
     changingKey: false, // true ⇒ show the field even when a key is already set
+    aiProviderChoice: "anthropic", // which pane the Turn-on-AI step shows ("anthropic" | "openai_compat")
+    aiProviders: null, // GET /api/settings/ai-providers payload (endpoint status)
+    compatUrl: "", // endpoint pane field buffers (data-field synced)
+    compatKey: "",
+    compatModel: "",
+    compatModels: [], // model ids from the last endpoint test (datalist food)
+    compatSavedModel: "", // the model id the axes already carry; an unchanged Continue must not re-write (and re-flatten) them
+    compatResult: null, // null | "testing" | {ok, models?} | {ok:false, error}
     careersSearch: null, // company-step careers probe: null | "searching" | {found, url}
     careersFor: "", // the website value that launched the in-flight probe (stale guard)
     careersAutofilled: false, // the careers field holds a probe result, not a hand-typed URL
@@ -108,6 +116,7 @@ function initState() {
     ruleTowns: [], // location terms the inclusion-rules compiler owns (read-only here)
     sectors: "", // excluded_sectors as a comma-joined string (a hard filter)
     titleBands: [], // target_title_bands the seniority checkboxes drive
+    seededLinkedinTitles: "", // JSON of the LinkedIn defaults THIS session seeded; filters may upgrade only that
     wishlist: [], // ordered Tier2Item objects {text, weight, craft, bonus_only}
     orderChanged: false, // any add/remove/move this session — gates the rank ramp
     touchedWeights: new Set(), // item REFS the user hand-weighted (identity survives reorder)
@@ -124,6 +133,8 @@ function initState() {
     companyValues: "", // "" = unset, else a VALUES_FIT entry
     companies: [], // what's already on the board — the required step shows its evidence
     createdCompany: null, // the created row; the done step polls its ATS status
+    schedule: null, // GET /api/schedule payload; the done-step opt-in gates on supported
+    installSchedule: true, // "keep this fresh automatically" — pre-checked, Finish installs unless unticked
     errors: {}, // per-field inline validation messages, keyed by data-field
     hydrated: null, // post-load snapshot; "Skip this step" warns when it differs
     exampleOpen: false, // the wishlist's "see a filled-in example" disclosure
@@ -146,7 +157,7 @@ export async function render(el) {
   container.onkeydown = onKeydown;
   container.onpointerdown = onPointerDown; // see onFocusOut's commit race note
   setFocusOut(container, onFocusOut);
-  const [criteria, persona, keyStatus, roadmap, onboarding, companies, inclusionRules] =
+  const [criteria, persona, keyStatus, roadmap, onboarding, companies, inclusionRules, scheduleStatus, aiProviders, aiModels] =
     await Promise.all([
       api.getCriteria().catch(() => null),
       api.getPersona().catch(() => null),
@@ -155,6 +166,11 @@ export async function render(el) {
       api.getOnboarding().catch(() => null),
       api.listCompanies().catch(() => []),
       api.getInclusionRules().catch(() => null),
+      // The done step's schedule opt-in: a failed fetch just hides the line.
+      api.getSchedule().catch(() => null),
+      // The Turn-on-AI step's endpoint pane; failures degrade to blank fields.
+      api.getAiProviders().catch(() => null),
+      api.getAiModels().catch(() => null),
       // The filters step's title-band picker reads the display vocabulary
       // (seniority ladder); loadVocab caches the promise so levelBands() is
       // populated by the time the step paints. A failed fetch degrades to the
@@ -163,6 +179,21 @@ export async function render(el) {
     ]);
   s.companies = companies;
   s.onboarding = onboarding;
+  s.schedule = scheduleStatus;
+  s.aiProviders = aiProviders;
+  // Endpoint pane hydration: the saved URL, and the model id the axes (or the
+  // switch-back memory) already carry. A returning endpoint user lands on
+  // their own pane; everyone else starts on Anthropic.
+  s.compatUrl = aiProviders?.base_url || "";
+  const rem = aiModels?.remembered;
+  s.compatModel =
+    (aiModels?.analysis?.provider === "openai_compat" && aiModels.analysis.model) ||
+    rem?.analysis?.openai_compat ||
+    rem?.writing?.openai_compat ||
+    "";
+  s.compatSavedModel =
+    aiModels?.analysis?.provider === "openai_compat" ? aiModels.analysis.model || "" : "";
+  if (aiProviders?.configured && !keyStatus?.configured) s.aiProviderChoice = "openai_compat";
   s.apiKeyDeclined = onboarding?.api_key_declined === true;
   s.criteriaLoadFailed = criteria === null;
   if (criteria?.tier1_params) {
@@ -194,12 +225,17 @@ export async function render(el) {
   s.wishlist = criteria?.tier2_criteria ?? [];
   if (persona) {
     s.name = persona.display_name || "";
-    s.domainLabel = persona.domain_label || "";
+    // The API serves a neutral default when the doc never answered ("the roles
+    // you are searching for") and flags it — placeholder prose, not a value.
+    // Treat it as unset: prefilling it once let a user append their real
+    // answer to it and trip the 120-char persona rail (an old partial save had
+    // written the taxonomy but not the persona, so field.done was true while
+    // domain_label was the default). An empty input beats echoed prose.
+    s.domainLabel = persona.domain_label_is_default ? "" : persona.domain_label || "";
     // Prefill the field input only when a field is actually configured
-    // (readiness `field.done`): the starter's placeholder label is not a value,
-    // and an unchanged prefill must NOT re-fire the taxonomy writer (see
-    // saveProfile) — write_field would replace a customized taxonomy block
-    // with the minimal wizard one.
+    // (readiness `field.done`): an unchanged prefill must NOT re-fire the
+    // taxonomy writer (see saveProfile) — write_field would replace a
+    // customized taxonomy block with the minimal wizard one.
     if (onboarding?.steps?.field?.done) s.field = s.domainLabel;
     s.fieldLoaded = s.field;
   }
@@ -507,12 +543,37 @@ function keyStep() {
       ? `<p class="wizard-note wizard-err">This key was rejected (401) when last tested — replace it, or test it again.</p>`
       : `<p class="wizard-note wizard-ok">A key is set (${esc(st.masked || "•••")}).</p>`;
   const testing = s.keyResult === "testing";
+  const compat = s.aiProviderChoice === "openai_compat";
+  // "I don't want to use AI" declines the whole feature, not just the key —
+  // while checked, the endpoint path greys out too (only meaningful when
+  // neither provider is set up, the same gate the checkbox itself renders on).
+  const declinedAll = !st?.configured && !s.aiProviders?.configured && s.apiKeyDeclined === true;
+  const chooser = `
+    <div class="theme-seg wizard-provider-seg" role="group" aria-label="AI provider">
+      <button type="button" data-action="ai-choice" data-value="anthropic" aria-pressed="${!compat}">Anthropic (Claude)</button>
+      <button type="button" data-action="ai-choice" data-value="openai_compat" aria-pressed="${compat}"${declinedAll ? " disabled" : ""}>My own endpoint</button>
+    </div>`;
+  if (compat) {
+    return `
+    <h1 class="wizard-title">Turn on AI${badge("key")}</h1>
+    <p class="wizard-lead">jshq scores each posting against your criteria, explains why, and
+      drafts outreach and cover letters in your voice — on Anthropic with your own API key,
+      or on any OpenAI-compatible endpoint you run or trust (Ollama, LM Studio, a hosted
+      provider). Without either, everything else still works — postings are pulled and
+      filtered as normal.</p>
+    ${chooser}
+    ${compatPane()}
+    <p class="wizard-fineprint">The URL is saved on this machine; the optional key goes to a .env file in your data directory. Job text and your documents are sent only to this endpoint, for the tasks it runs — a localhost URL keeps everything on this machine.</p>`;
+  }
   const body = editing ? keyEditView(st, shadowed, testing) : keySetView(shadowed, testing);
   return `
     <h1 class="wizard-title">Turn on AI${badge("key")}</h1>
-    <p class="wizard-lead">With your own Anthropic API key, jshq scores each posting against
-      your criteria, explains why, and drafts outreach and cover letters in your voice.
-      Without one, everything else still works — postings are pulled and filtered as normal.</p>
+    <p class="wizard-lead">jshq scores each posting against your criteria, explains why, and
+      drafts outreach and cover letters in your voice — on Anthropic with your own API key,
+      or on any OpenAI-compatible endpoint you run or trust (Ollama, LM Studio, a hosted
+      provider). Without either, everything else still works — postings are pulled and
+      filtered as normal.</p>
+    ${chooser}
     ${body}
     <div aria-live="polite">${result}
     ${shadowed
@@ -520,6 +581,42 @@ function keyStep() {
            anything saved here — manage it in your shell. AI is already on.</p>`
       : ""}</div>
     <p class="wizard-fineprint">Saved to a .env file in your data directory on this machine, and sent only to api.anthropic.com.</p>`;
+}
+
+/* The OpenAI-compatible pane of the Turn-on-AI step (2026-08-22, owner
+   direction: the endpoint must be choosable here, not only in Settings).
+   Save & test writes the endpoint, points every AI task at it (both axes on
+   the typed model id), then probes GET /models — the probe is informational:
+   only a failed SAVE blocks, matching the key pane's rule. */
+function compatPane() {
+  const p = s.aiProviders;
+  let result = "";
+  if (s.compatResult === "testing") result = `<p class="wizard-note">Testing…</p>`;
+  else if (s.compatResult?.ok)
+    result = `<p class="wizard-note wizard-ok">The endpoint works${s.compatResult.models?.length ? ` — serving ${s.compatResult.models.length} model${s.compatResult.models.length === 1 ? "" : "s"}` : ""}. AI tasks run on it.</p>`;
+  else if (s.compatResult?.error)
+    result = `<p class="wizard-note wizard-err">${esc(s.compatResult.error)}</p>`;
+  else if (p?.configured)
+    result = `<p class="wizard-note wizard-ok">An endpoint is set (${esc(p.base_url || "")}).</p>`;
+  const busy = s.compatResult === "testing";
+  return `
+    <div class="form-field">
+      <label for="wiz-compat-url">Endpoint base URL</label>
+      <input id="wiz-compat-url" type="text" data-field="compatUrl" placeholder="http://localhost:11434/v1" value="${esc(s.compatUrl)}" autocomplete="off" spellcheck="false" data-autofocus />
+    </div>
+    <div class="form-field">
+      <label for="wiz-compat-key">API key (optional — local runtimes have none)</label>
+      <input id="wiz-compat-key" type="password" data-field="compatKey" autocomplete="off" />
+    </div>
+    <div class="form-field">
+      <label for="wiz-compat-model">Model id</label>
+      <input id="wiz-compat-model" type="text" data-field="compatModel" placeholder="e.g. llama3.3" value="${esc(s.compatModel)}" list="wiz-compat-models" autocomplete="off" spellcheck="false" />
+      <datalist id="wiz-compat-models">${(s.compatModels || []).map((id) => `<option value="${esc(id)}"></option>`).join("")}</datalist>
+    </div>
+    <div class="wizard-inline">
+      <button class="btn" data-action="save-test-endpoint"${busy ? " disabled" : ""}>Save &amp; test</button>
+    </div>
+    <div aria-live="polite">${result}</div>`;
 }
 
 /* A key is already set: no raw field, just verify or begin a replacement. Change
@@ -541,10 +638,10 @@ function keyEditView(st, shadowed, testing) {
   const cancel = st?.configured
     ? `<button class="btn btn-ghost" data-action="cancel-change-key"${testing ? " disabled" : ""}>Cancel new API</button>`
     : "";
-  // The decline option only makes sense with no key at all; a configured or
-  // env-shadowed key means AI is already on. Checking it disables the field +
-  // Save (unchecking re-enables) and completes the api_key setup step.
-  const noKey = !st?.configured;
+  // The decline option only makes sense with no AI at all — no key AND no
+  // endpoint (either one means AI is already on). Checking it disables the
+  // field + Save (unchecking re-enables) and completes the api_key setup step.
+  const noKey = !st?.configured && !s.aiProviders?.configured;
   const declined = noKey && s.apiKeyDeclined === true;
   const fieldOff = shadowed || declined;
   const saveOff = shadowed || testing || declined;
@@ -562,11 +659,11 @@ function keyEditView(st, shadowed, testing) {
       noKey
         ? `<label class="wizard-check wizard-decline">
              <input type="checkbox" data-action="toggle-decline-key" ${declined ? "checked" : ""} />
-             I don't want to use an API key
+             I don't want to use AI
            </label>
            ${
              declined
-               ? `<p class="wizard-note wizard-err">AI features stay off without a key: postings aren't scored or explained, and there are no AI-drafted messages, cover-letter tailoring, or job-URL prefill. Everything else — pulling, filtering, tracking — works as normal. Uncheck this to add a key.</p>`
+               ? `<p class="wizard-note wizard-err">AI features stay off: postings aren't scored or explained, and there are no AI-drafted messages, cover-letter tailoring, or job-URL prefill. Everything else — pulling, filtering, tracking — works as normal. Uncheck this to set up a provider.</p>`
                : ""
            }`
         : ""
@@ -581,9 +678,12 @@ function profileStep() {
     ${criteriaBanner({ wordsSafe: false })}
     <div class="form-field">
       <label for="wiz-field">The kind of roles you're searching for</label>
-      <input id="wiz-field" type="text" data-field="field" placeholder="e.g. backend engineering, product design, data science" value="${esc(s.field)}" data-autofocus />
+      <input id="wiz-field" type="text" data-field="field" placeholder="e.g. backend engineering, product design, data science" value="${esc(s.field)}" data-autofocus${errAttrs("field")} />
+      ${fieldError("field")}
       <p class="wizard-hint">${hintIcon()}jshq matches these words against job titles and pulls in the
-        postings that contain them, so use terms that appear in real titles. List several with commas.</p>
+        postings that contain them, so use terms that appear in real titles. A few comma-separated
+        role words is plenty — this same answer becomes the one-line description of your search,
+        so keep it short rather than exhaustive.</p>
       <details class="wizard-example">
         <summary>See examples</summary>
         <div class="wizard-example-body">
@@ -591,6 +691,9 @@ function profileStep() {
             <li>"product manager, product" pulls in Product Manager, Senior Product Manager, Director of Product.</li>
             <li>"nurse, nursing, RN" pulls in Registered Nurse, Nurse Manager, RN Case Manager.</li>
             <li>"data, analytics" pulls in Data Analyst, Data Scientist, Analytics Engineer.</li>
+            <li>"project management, program management, PMO" pulls in Project Manager, Program
+              Manager, PMO Director. Keep it to the role family — certifications like PMP rarely
+              appear in job titles.</li>
           </ul>
           <p class="wizard-hint">${hintIcon()}You can refine these any time in Settings → Sourcing.</p>
         </div>
@@ -598,7 +701,8 @@ function profileStep() {
     </div>
     <div class="form-field">
       <label for="wiz-name">Your name</label>
-      <input id="wiz-name" type="text" data-field="name" placeholder="e.g. Sam Lee" value="${esc(s.name)}" />
+      <input id="wiz-name" type="text" data-field="name" placeholder="e.g. Sam Lee" value="${esc(s.name)}"${errAttrs("name")} />
+      ${fieldError("name")}
       <p class="wizard-hint">${hintIcon()}Goes on the drafts the AI writes. Leave it blank to stay anonymous.</p>
     </div>`;
 }
@@ -835,6 +939,8 @@ function careersStatusHtml() {
     return `<span class="careers-status">Looking for their job board…</span>`;
   if (cs?.found)
     return `<span class="careers-status careers-status-ok">Found their job board — filled in above.</span>`;
+  if (cs?.error)
+    return `<span class="careers-status">Couldn't check for a job board just now — add a careers link if you have one, or edit the website to retry.</span>`;
   if (cs && !cs.found)
     return `<span class="careers-status">No job board found automatically — add a careers link if you have one.</span>`;
   return "";
@@ -869,7 +975,14 @@ async function probeCareers() {
   // A hand-typed careers URL is authoritative — leave it and don't probe.
   if (careers && !s.careersAutofilled) return resetCareers();
   // Already resolved for this exact website — no need to hit the network again.
-  if (s.careersFor === website && s.careersSearch && s.careersSearch !== "searching") return;
+  // A failed probe doesn't count as resolved: the next blur retries it.
+  if (
+    s.careersFor === website &&
+    s.careersSearch &&
+    s.careersSearch !== "searching" &&
+    !s.careersSearch.error
+  )
+    return;
   // A stale auto-fill from a previous website: clear it before the new probe.
   if (careers && s.careersAutofilled) {
     s.companyCareers = "";
@@ -883,7 +996,9 @@ async function probeCareers() {
     res = await api.previewCareers({ name: s.companyName.trim(), website, careers_url: null });
   } catch {
     if (s.careersFor !== website) return; // superseded by a newer edit
-    s.careersSearch = { found: false };
+    // A failed lookup is not "no board found" (F6) — say the check itself
+    // didn't run, and let a later blur retry it.
+    s.careersSearch = { error: true };
     return paintCareers();
   }
   if (s.careersFor !== website) return; // a newer probe owns the field now
@@ -951,8 +1066,13 @@ function atsLineHtml() {
 /* A key that is present AND not known-rejected. The "scoring/AI is on" copy
    keys on this, not raw `configured`: a key that last tested 401 is configured
    but useless, and must not imply scoring is live (#33). */
+/* "AI is on": a usable Anthropic key OR a configured endpoint. The name
+   predates the endpoint path; every done-step line keys off this. */
 function keyUsable() {
-  return !!s.keyStatus?.configured && !s.onboarding?.api_key_rejected;
+  return (
+    (!!s.keyStatus?.configured && !s.onboarding?.api_key_rejected) ||
+    !!s.aiProviders?.configured
+  );
 }
 
 /* What actually happens to incoming postings, given what THIS user set up —
@@ -965,7 +1085,7 @@ function scoringLine() {
     return "Every posting that comes in gets filtered by your hard limits and scored against your wish list.";
   if (hasKey)
     return "Postings get filtered by your hard limits. Scoring starts once you add a wish list — it's the one exercise still waiting.";
-  return "Postings get filtered by your hard limits. Add an Anthropic API key later to turn on scoring and drafts.";
+  return "Postings get filtered by your hard limits. Turn on AI later (an Anthropic key or your own endpoint, in Settings → System) to get scoring and drafts.";
 }
 
 const STEP_LABELS = {
@@ -1054,12 +1174,29 @@ function doneCtas() {
     <div class="wizard-inline wizard-cta-row">${ctas.join("")}</div>`;
 }
 
+/* The schedule opt-in (pre-checked, owner call): Finish installs the OS
+   scheduler entries — refresh twice a day, backup nightly — unless unticked.
+   Hidden when this system has no supported scheduler or entries already
+   exist; the checkbox mirrors into state without a repaint (toggle-band's
+   focus rule). */
+function scheduleOptInHtml() {
+  const sch = s.schedule;
+  if (!sch || !sch.supported) return "";
+  if (sch.installed?.refresh || sch.installed?.backup) return "";
+  return `
+    <label class="wizard-check wizard-schedule-optin">
+      <input type="checkbox" data-action="toggle-schedule" ${s.installSchedule ? "checked" : ""} />
+      Keep this fresh automatically: check the boards twice a day and back up nightly. Writes a scheduler entry on this machine — change or remove it anytime in Settings → System.
+    </label>`;
+}
+
 function doneStep() {
   return `
     <h1 class="wizard-title">You're set.</h1>
     <p class="wizard-lead" data-ats-line>${atsLineHtml()}</p>
     <p class="wizard-lead">${scoringLine()}</p>
     ${doneCtas()}
+    ${scheduleOptInHtml()}
     ${synthesisLineHtml()}
     ${voiceLineHtml()}
     <div data-remaining>${remainingHtml()}</div>`;
@@ -1227,7 +1364,11 @@ function commitEdit() {
 function stepDirty(id) {
   const h = s.hydrated;
   if (!h) return false;
-  if (id === "key") return !!s.key.trim();
+  if (id === "key")
+    return (
+      !!s.key.trim() ||
+      (s.aiProviderChoice === "openai_compat" && !s.aiProviders?.configured && !!s.compatUrl.trim())
+    );
   if (id === "profile") return s.name.trim() !== h.name || s.field.trim() !== h.field;
   if (id === "filters")
     return (
@@ -1293,6 +1434,16 @@ async function onClick(e) {
   if (action === "save-test-key") return saveTestKey();
   if (action === "test-key") return testKey();
   if (action === "toggle-decline-key") return toggleDeclineKey(btn.checked);
+  if (action === "ai-choice") {
+    s.aiProviderChoice = btn.dataset.value; // typed fields already synced above
+    return paint();
+  }
+  if (action === "save-test-endpoint") return saveTestEndpoint();
+  if (action === "toggle-schedule") {
+    // Mirror into state without a repaint (see toggle-band's focus rule).
+    s.installSchedule = btn.checked;
+    return;
+  }
   if (action === "toggle-band") {
     // The checkbox DOM already reflects the toggle; just mirror it into state
     // (no repaint — a repaint would fight focus as the user ticks several).
@@ -1522,6 +1673,47 @@ async function storeAndTestKey(key) {
   return true;
 }
 
+/* Persist the endpoint pane: save the URL (+ optional key), then point every
+   AI task at it — both axes on the typed model id, the choice this pane
+   announces. Returns false when either write is refused (a coded 422 rides
+   the toast-free wizard-note instead). Never probes; see saveTestEndpoint. */
+async function storeEndpoint() {
+  const url = s.compatUrl.trim();
+  const model = s.compatModel.trim();
+  try {
+    s.aiProviders = await api.putAiProviders(url, s.compatKey.trim() || undefined);
+    await api.putAiModels(
+      { provider: "openai_compat", model },
+      { provider: "openai_compat", model }
+    );
+    s.compatSavedModel = model;
+    return true;
+  } catch (error) {
+    s.compatResult = { ok: false, error: error.detail || error.message };
+    return false;
+  }
+}
+
+async function saveTestEndpoint() {
+  if (!s.compatUrl.trim()) return toast("Enter the endpoint base URL first", { error: true });
+  if (!s.compatModel.trim()) return toast("Enter the model id your endpoint serves", { error: true });
+  s.compatResult = "testing";
+  paint();
+  if (!(await storeEndpoint())) return paint();
+  await syncOnboarding(); // a configured endpoint completes the api_key step
+  // The probe is informational — GET /models against the just-saved URL. A
+  // failure warns but never blocks: the save already landed (the key pane's
+  // only-a-failed-SAVE-blocks rule).
+  try {
+    const test = await api.testAiProviders();
+    s.compatResult = test.ok ? { ok: true, models: test.models } : { ok: false, error: test.error };
+    if (test.ok) s.compatModels = test.models || [];
+  } catch (error) {
+    s.compatResult = { ok: false, error: error.detail || error.message };
+  }
+  paint();
+}
+
 async function saveTestKey() {
   const key = s.key.trim();
   if (!key) return toast("Paste a key first", { error: true });
@@ -1584,24 +1776,51 @@ async function next() {
   paint();
   try {
     if (id === "key") {
-      // A typed, unsaved key must not be discarded by the primary button: save
-      // (and test) it on the way through. Only a failed SAVE blocks.
-      const typed = s.key.trim();
-      const editable = s.keyStatus?.editable !== false;
-      if (typed && editable && !s.keyResult?.ok) {
-        s.keyResult = "testing";
-        paint();
-        if (!(await storeAndTestKey(typed))) {
-          s.saving = false;
-          return paint();
+      if (s.aiProviderChoice === "openai_compat") {
+        // Typed endpoint config must not be discarded by the primary button:
+        // save it on the way through. A half-filled pane blocks with the
+        // missing piece named; only a failed SAVE blocks otherwise.
+        const url = s.compatUrl.trim();
+        const model = s.compatModel.trim();
+        const unchanged =
+          url === (s.aiProviders?.base_url || "") && model === s.compatSavedModel;
+        if ((url || model) && !unchanged) {
+          if (!url || !model) {
+            toast(!url ? "Enter the endpoint base URL first" : "Enter the model id your endpoint serves", { error: true });
+            s.saving = false;
+            return paint();
+          }
+          if (!(await storeEndpoint())) {
+            s.saving = false;
+            return paint();
+          }
+          await syncOnboarding();
         }
-        // Refresh readiness so the tracker/badge reflect the just-saved key's
-        // verdict on the way through — Continue used to skip this, so a rejected
-        // key advanced still reading as done until a later mount (#33).
-        await syncOnboarding();
+      } else {
+        // A typed, unsaved key must not be discarded by the primary button: save
+        // (and test) it on the way through. Only a failed SAVE blocks.
+        const typed = s.key.trim();
+        const editable = s.keyStatus?.editable !== false;
+        if (typed && editable && !s.keyResult?.ok) {
+          s.keyResult = "testing";
+          paint();
+          if (!(await storeAndTestKey(typed))) {
+            s.saving = false;
+            return paint();
+          }
+          // Refresh readiness so the tracker/badge reflect the just-saved key's
+          // verdict on the way through — Continue used to skip this, so a rejected
+          // key advanced still reading as done until a later mount (#33).
+          await syncOnboarding();
+        }
       }
-    } else if (id === "profile") await saveProfile();
-    else if (id === "filters") {
+    } else if (id === "profile") {
+      if (!(await saveProfile())) {
+        s.saving = false;
+        paint();
+        return focusFirstError();
+      }
+    } else if (id === "filters") {
       if (!(await saveFilters())) {
         s.saving = false;
         paint();
@@ -1627,9 +1846,103 @@ async function next() {
   if (id === "company") startAtsPoll(); // the done step just painted — watch the check live
 }
 
+/* Discipline → practitioner noun by last-word suffix ("backend engineering" →
+   "backend engineer", "product design" → "product designer"): unlocks the
+   IC-ladder titles people actually hold. An unmapped suffix returns null and
+   the IC bands fall back to the bare field words. */
+const FIELD_NOUN_SUFFIXES = {
+  engineering: "engineer",
+  design: "designer",
+  science: "scientist",
+  development: "developer",
+  research: "researcher",
+  architecture: "architect",
+  analytics: "analyst",
+  analysis: "analyst",
+  writing: "writer",
+  management: "manager",
+};
+
+function fieldNoun(f) {
+  const words = f.split(/\s+/);
+  const noun = FIELD_NOUN_SUFFIXES[words[words.length - 1].toLowerCase()];
+  return noun ? [...words.slice(0, -1), noun].join(" ") : null;
+}
+
+/* Band slug → title phrases for one field label (its practitioner noun along-
+   side, when derivable). These feed LinkedIn people searches (quoted keywords,
+   not exact titles), so phrases real titles contain beat grammatically clever
+   ones. Slugs a custom level_bands doc adds aren't here — they're skipped;
+   the anchors below keep the list useful anyway. */
+const LINKEDIN_TITLE_TEMPLATES = {
+  vp_plus: (f) => [`VP of ${f}`],
+  senior_director: (f) => [`Senior Director of ${f}`],
+  // Both orders: quoted searches are token-order-sensitive, and real titles
+  // come in both ("Director of Product Design" AND "Product Design Director").
+  director: (f) => [`Director of ${f}`, `${f} director`],
+  // The comma form is the convention senior-manager titles actually use.
+  senior_manager: (f) => [`Senior Manager, ${f}`],
+  manager: (f) => [`${f} manager`],
+  distinguished: (f, n) => [n ? `Distinguished ${n}` : f],
+  principal: (f, n) => [n ? `Principal ${n}` : f],
+  senior_staff: (f, n) => [n ? `Senior Staff ${n}` : f],
+  staff: (f, n) => [n ? `Staff ${n}` : f],
+  ic: (f, n) => (n ? [`Senior ${n}`, n] : [f]),
+  junior: (f, n) => [n ? `Junior ${n}` : `Junior ${f}`],
+};
+
+/* Compose default LinkedIn role-check titles from the field answer × the
+   selected seniority bands — offline, deterministic, keyless. Band titles come
+   first in levelBands() order (most senior wins the cap), then per-field
+   networking ANCHORS regardless of bands: the discipline's leadership and the
+   people who carry it in their titles. Role checks exist to find people to
+   talk to at a company, not only the title the user would hold — a single
+   chip is too sparse to network with. Capped at 10 to match the combined
+   search URL's MAX_COMBINED_TITLES. */
+function deriveLinkedinTitles(field, bandSlugs) {
+  const fields = field.split(",").map((t) => t.trim()).filter(Boolean);
+  if (!fields.length) return [];
+  const selected = new Set(bandSlugs);
+  const seen = new Set();
+  const out = [];
+  const push = (t) => {
+    const k = t.toLowerCase();
+    if (!seen.has(k)) {
+      seen.add(k);
+      out.push(t);
+    }
+  };
+  for (const band of levelBands()) {
+    const tpl = LINKEDIN_TITLE_TEMPLATES[band.value];
+    if (!selected.has(band.value) || !tpl) continue;
+    for (const f of fields) tpl(f, fieldNoun(f)).forEach(push);
+  }
+  for (const f of fields) {
+    push(`Head of ${f}`);
+    const n = fieldNoun(f);
+    if (n) push(n);
+    push(f);
+  }
+  return out.slice(0, 10);
+}
+
 async function saveProfile() {
   const name = s.name.trim();
   const field = s.field.trim();
+  // Mirror criteria.py's PERSONA_MAX_LEN (120) rail BEFORE any write. The
+  // server 422s a long domain_label — but only after write_field has already
+  // replaced the taxonomy with the paragraph, and the raw detail names
+  // persona['domain_label'], an internal nothing on this screen is called.
+  // Validate up front so nothing partial lands, in the input's own terms.
+  if (field.length > 120) {
+    s.errors.field =
+      "Keep this under 120 characters — a few comma-separated role words that appear in real job titles, not a description.";
+    return false;
+  }
+  if (name.length > 120) {
+    s.errors.name = "Keep the name under 120 characters.";
+    return false;
+  }
   // Only a CHANGED field re-fires the taxonomy writer: write_field replaces the
   // whole taxonomy block with the minimal wizard one, so an untouched Continue
   // must not clobber vocabulary built up in Settings.
@@ -1655,26 +1968,37 @@ async function saveProfile() {
       }
       await api.putInclusionRules({ rules, manual });
     }
-    s.fieldLoaded = field;
-    s.domainLabel = field;
-    // Seed the per-company LinkedIn role checks from the same role words, so a
-    // newly added company arrives with useful default searches (find people in
-    // these roles, one click) instead of a blank section. Only when the default
-    // is still unset — never clobber one the user has customized.
-    const roleTerms = field.split(",").map((t) => t.trim()).filter(Boolean);
-    if (roleTerms.length) {
+    s.fieldLoaded = field; // discipline + rules landed; domainLabel commits after putPersona below
+    // Seed the per-company LinkedIn role checks: real title phrases composed
+    // from the same role words × the seniority bands (hydrated defaults at this
+    // point — the filters step, which comes later, re-derives with the bands
+    // the user actually confirms). Only when the default is still unset —
+    // never clobber one the user has customized.
+    const seededTitles = deriveLinkedinTitles(field, s.titleBands);
+    if (seededTitles.length) {
       const cur = await api.getSetting("linkedin_title_defaults").catch(() => null);
-      if (cur && !(cur.value || []).length) {
-        await api.putSetting("linkedin_title_defaults", roleTerms).catch(() => {});
+      if (!cur) titleSeedFailed();
+      else if (!(cur.value || []).length) {
+        try {
+          await api.putSetting("linkedin_title_defaults", seededTitles);
+          s.seededLinkedinTitles = JSON.stringify(seededTitles);
+        } catch {
+          titleSeedFailed();
+        }
       }
     }
   }
   if (name || field) {
-    await api.putPersona({
-      display_name: name || null,
-      domain_label: field || s.domainLabel || "the roles you are searching for",
-    });
+    const domainLabel = field || s.domainLabel || "the roles you are searching for";
+    await api.putPersona({ display_name: name || null, domain_label: domainLabel });
+    // Commit only AFTER the write succeeds. This used to be assigned mid-save,
+    // before putPersona — a rejected value stayed in s.domainLabel, where the
+    // empty-field fallback silently RESENT it on the next Continue: the user
+    // deleted the words from the input, and the save still "thought they were
+    // there". Only a hard refresh cleared it.
+    s.domainLabel = domainLabel;
   }
+  return true;
 }
 
 /* Rank → weight (owner decision): the order the user just confirmed IS the
@@ -1822,7 +2146,40 @@ async function saveFilters() {
   const savedRadius = resp.tier1_params.location_radius;
   s.homeTown = savedRadius?.center?.label || "";
   if (savedRadius?.radius_minutes) s.driveMins = String(savedRadius.radius_minutes);
+  // The seniority bands are confirmed HERE, after the profile step seeded the
+  // LinkedIn defaults with the hydrated ones. Re-derive with the bands the
+  // user actually chose — but only over an empty setting or this session's own
+  // seed, never over a list the user has hand-edited (in Settings → Sourcing
+  // or a prior run). Best-effort: a failed write never blocks the step.
+  const fieldNow = s.field.trim() || s.fieldLoaded;
+  const derived = deriveLinkedinTitles(fieldNow, s.titleBands);
+  if (derived.length) {
+    const cur = await api.getSetting("linkedin_title_defaults").catch(() => null);
+    if (!cur) titleSeedFailed();
+    else {
+      const curJson = JSON.stringify(cur.value || []);
+      const owned = curJson === "[]" || curJson === s.seededLinkedinTitles;
+      if (owned && curJson !== JSON.stringify(derived)) {
+        try {
+          await api.putSetting("linkedin_title_defaults", derived);
+          s.seededLinkedinTitles = JSON.stringify(derived);
+        } catch {
+          titleSeedFailed();
+        }
+      }
+    }
+  }
   return true;
+}
+
+/* The title-defaults seed is best-effort by design (owner call: a failed
+   write never blocks the step) but no longer silent (F6): it decides what
+   the per-company LinkedIn role checks offer later, so a user should hear
+   when it didn't land and where to fix it. */
+function titleSeedFailed() {
+  toast("Couldn't save the LinkedIn title defaults — you can set them in Settings → Sourcing.", {
+    error: true,
+  });
 }
 
 /* The raw-capture payload. Matrix cells ride only when one has content: the
@@ -1945,6 +2302,17 @@ async function finish() {
   clearResumeStep();
   s.saving = true;
   paint();
+  // The opt-in install, before the exit: non-fatal, but never silent — a
+  // failure toasts with the scheduler's own words and Settings → System keeps
+  // the control for another try.
+  const sch = s.schedule;
+  if (s.installSchedule && sch?.supported && !(sch.installed?.refresh || sch.installed?.backup)) {
+    try {
+      await api.installSchedule();
+    } catch (error) {
+      toast(error.detail || error.message, { error: true });
+    }
+  }
   try {
     await api.putOnboarding({ completed: true });
   } catch {

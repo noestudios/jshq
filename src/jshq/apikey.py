@@ -1,16 +1,22 @@
-"""The single authority for the Anthropic API key.
+"""The single authority for the secrets jshq holds in ``DATA_DIR/.env``.
 
-The key is the one secret jshq holds. It lives in ``DATA_DIR/.env`` (the file
-``cli._load_env()`` stage 2 loads), never in the database and never sent to the
-frontend. This module is the only place that reads or writes it, so the rules
-about *which* copy is in force and how a saved key becomes live live in exactly
-one spot.
+The Anthropic API key is the original resident; Providers Tier 2 added the
+OpenAI-compatible endpoint's key alongside it. Both live in ``DATA_DIR/.env``
+(the file ``cli._load_env()`` stage 2 loads), never in the database and never
+sent to the frontend. This module is the only place that reads or writes
+them, so the rules about *which* copy is in force and how a saved value
+becomes live live in exactly one spot.
+
+The module-level functions (``status``, ``write_key``, …) keep their original
+Anthropic-only signatures — they are the contract the api-key routes, the
+degradation paths, and the tests pin — and delegate to the generic
+``*_env_value`` forms that take an env-var name.
 
 Nothing here imports ``anthropic``: the app must run without the package, and
-key management is pure file + ``os.environ`` work. The client is still built
-per-call by the consumers (scoring, compose, jobparse), each of which reads
-``os.environ`` through :func:`is_configured` — so a key saved via :func:`write_key`
-is live for the next request without a restart (no singleton to invalidate).
+key management is pure file + ``os.environ`` work. Clients are still built
+per-call by the consumers, each of which reads ``os.environ`` — so a key
+saved here is live for the next request without a restart (no singleton to
+invalidate).
 """
 
 import os
@@ -28,9 +34,12 @@ MISSING_MESSAGE = (
     "No Anthropic API key — add one in Settings → System to turn on AI features."
 )
 
-# A key line in the .env, tolerating a leading `export ` and surrounding space.
-# Comment lines (`# ...`) never match, so guidance in the file is preserved.
-_KEY_LINE = re.compile(rf"^\s*(?:export\s+)?{re.escape(ENV_KEY)}\s*=", re.ASCII)
+
+def _key_line_re(env_key: str) -> re.Pattern:
+    """A `env_key` line in the .env, tolerating a leading `export ` and
+    surrounding space. Comment lines (`# ...`) never match, so guidance in the
+    file is preserved."""
+    return re.compile(rf"^\s*(?:export\s+)?{re.escape(env_key)}\s*=", re.ASCII)
 
 
 def _env_path() -> Path:
@@ -40,16 +49,17 @@ def _env_path() -> Path:
     return paths.DATA_DIR / ".env"
 
 
-def _read_file_value() -> str | None:
-    """The ANTHROPIC_API_KEY value written in DATA_DIR/.env, or None. A minimal
+def _read_file_value(env_key: str) -> str | None:
+    """The `env_key` value written in DATA_DIR/.env, or None. A minimal
     reader — enough to compare on-disk against the effective env, not a full
     dotenv parser (python-dotenv owns loading; this only answers "what did we
     write")."""
     path = _env_path()
     if not path.exists():
         return None
+    line_re = _key_line_re(env_key)
     for line in path.read_text(encoding="utf-8").splitlines():
-        if not _KEY_LINE.match(line):
+        if not line_re.match(line):
             continue
         value = line.split("=", 1)[1].strip()
         # Strip a single layer of matching quotes, mirroring dotenv.
@@ -61,8 +71,8 @@ def _read_file_value() -> str | None:
 
 def _validate(value: str) -> str:
     """A key is a single opaque token. Reject whitespace and control characters
-    (either would corrupt the .env line or hand the SDK a malformed header); do
-    NOT enforce an ``sk-ant-`` prefix — key formats are the provider's to change.
+    (either would corrupt the .env line or hand the client a malformed header);
+    do NOT enforce a provider prefix — key formats are the provider's to change.
     """
     stripped = value.strip()
     if not stripped:
@@ -79,33 +89,21 @@ def mask(value: str) -> str:
     return "····" + tail
 
 
-def is_configured() -> bool:
-    """Whether the effective environment has a key — the exact question the AI
-    guards ask, since ``AsyncAnthropic()`` reads ``os.environ`` itself."""
-    return bool(os.environ.get(ENV_KEY))
+def env_value_status(env_key: str) -> dict:
+    """What a Settings UI needs for one secret, never the secret itself.
 
-
-def set_process_key(value: str) -> None:
-    """Make a key live in this process immediately. Clients are built per-call,
-    so the next AI request picks it up with no restart."""
-    os.environ[ENV_KEY] = value
-
-
-def status() -> dict:
-    """What the Settings UI needs, never the key itself.
-
-    ``source`` says where the in-force key comes from: ``"data-dir"`` (our .env,
-    which we can rewrite), ``"environment"`` (a real exported var or a cwd .env
-    that dotenv loaded first — stage 1 wins under ``override=False``), or ``None``
-    when no key is set. ``editable`` is False only for ``"environment"``: writing
-    DATA_DIR/.env would be silently beaten by that shadow on the next start, so
-    the UI must not claim a durable save.
+    ``source`` says where the in-force value comes from: ``"data-dir"`` (our
+    .env, which we can rewrite), ``"environment"`` (a real exported var or a
+    cwd .env that dotenv loaded first — stage 1 wins under ``override=False``),
+    or ``None`` when nothing is set. ``editable`` is False only for
+    ``"environment"``: writing DATA_DIR/.env would be silently beaten by that
+    shadow on the next start, so the UI must not claim a durable save.
 
     Limitation: provenance is inferred by value, so an exported var holding the
     *same* string as our .env reads as ``"data-dir"``. Harmless — the values agree.
     """
-    effective = os.environ.get(ENV_KEY) or None
-    file_value = _read_file_value()
+    effective = os.environ.get(env_key) or None
+    file_value = _read_file_value(env_key)
     if effective is None:
         return {"configured": False, "masked": None, "source": None, "editable": True}
     source = "data-dir" if file_value == effective else "environment"
@@ -125,26 +123,28 @@ def _write_lines(path: Path, lines: list[str]) -> None:
     text = "\n".join(lines) + "\n" if lines else ""
     tmp = path.with_name(path.name + ".tmp")
     # 0600 at CREATION, not chmod-after-write: a default-umask temp briefly
-    # holds the one secret the app has world-readable, and a swallowed chmod
-    # failure would install it that way permanently. os.open's mode is
-    # advisory-only on Windows (no mode bits) — same effective no-op as before.
+    # holds a secret world-readable, and a swallowed chmod failure would
+    # install it that way permanently. os.open's mode is advisory-only on
+    # Windows (no mode bits) — same effective no-op as before.
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as fh:
         fh.write(text)
     tmp.replace(path)
 
 
-def write_key(value: str) -> dict:
-    """Set the key in DATA_DIR/.env, preserving every other line (JSHQ_DATA_DIR
-    especially), and make it live in this process. Returns the new status."""
+def write_env_value(env_key: str, value: str) -> dict:
+    """Set `env_key` in DATA_DIR/.env, preserving every other line
+    (JSHQ_DATA_DIR and the other keys especially), and make it live in this
+    process. Returns the new status."""
     clean = _validate(value)
     path = _env_path()
     existing = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
-    new_line = f"{ENV_KEY}={clean}"
+    line_re = _key_line_re(env_key)
+    new_line = f"{env_key}={clean}"
     out: list[str] = []
     replaced = False
     for line in existing:
-        if _KEY_LINE.match(line):
+        if line_re.match(line):
             if not replaced:  # collapse any duplicate key lines into one
                 out.append(new_line)
                 replaced = True
@@ -153,17 +153,50 @@ def write_key(value: str) -> dict:
     if not replaced:
         out.append(new_line)
     _write_lines(path, out)
-    set_process_key(clean)
-    return status()
+    os.environ[env_key] = clean
+    return env_value_status(env_key)
+
+
+def clear_env_value(env_key: str) -> dict:
+    """Remove `env_key` from DATA_DIR/.env and unset it in this process. Any
+    other lines survive. Returns the new status (which may still report a
+    shadowing ``environment`` value we cannot remove)."""
+    path = _env_path()
+    line_re = _key_line_re(env_key)
+    if path.exists():
+        kept = [ln for ln in path.read_text(encoding="utf-8").splitlines() if not line_re.match(ln)]
+        _write_lines(path, kept)
+    os.environ.pop(env_key, None)
+    return env_value_status(env_key)
+
+
+# --- The Anthropic key's original interface, unchanged for its consumers. ---
+
+
+def is_configured() -> bool:
+    """Whether the effective environment has an Anthropic key — the exact
+    question the AI guards ask, since ``AsyncAnthropic()`` reads
+    ``os.environ`` itself."""
+    return bool(os.environ.get(ENV_KEY))
+
+
+def set_process_key(value: str) -> None:
+    """Make an Anthropic key live in this process immediately. Clients are
+    built per-call, so the next AI request picks it up with no restart."""
+    os.environ[ENV_KEY] = value
+
+
+def status() -> dict:
+    """The Anthropic key's status for the Settings UI, never the key itself."""
+    return env_value_status(ENV_KEY)
+
+
+def write_key(value: str) -> dict:
+    """Set the Anthropic key in DATA_DIR/.env and make it live. Returns the
+    new status."""
+    return write_env_value(ENV_KEY, value)
 
 
 def clear_key() -> dict:
-    """Remove the key from DATA_DIR/.env and unset it in this process. Any other
-    lines survive. Returns the new status (which may still report a shadowing
-    ``environment`` key we cannot remove)."""
-    path = _env_path()
-    if path.exists():
-        kept = [ln for ln in path.read_text(encoding="utf-8").splitlines() if not _KEY_LINE.match(ln)]
-        _write_lines(path, kept)
-    os.environ.pop(ENV_KEY, None)
-    return status()
+    """Remove the Anthropic key from DATA_DIR/.env and this process."""
+    return clear_env_value(ENV_KEY)

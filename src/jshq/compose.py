@@ -13,7 +13,7 @@ import re
 import sqlite3
 from pathlib import Path
 
-from jshq import paths
+from jshq import aicfg, paths
 from jshq.scoring.criteria import persona_display_name
 
 VOICE_GUIDE_PATH = paths.DEFAULTS_DIR / "voice_guide.md"  # shipped default / fallback
@@ -39,17 +39,12 @@ def save_voice_guide(text: str) -> None:
     tmp.write_text(text, encoding="utf-8")
     tmp.replace(path)
 
-MODEL = "claude-sonnet-5"
+# Model choice lives in aicfg (per-task selection, Providers Tier 1): callers
+# resolve and pass it in; None falls back to the shipped default. The thinking
+# workaround the old THINKING constant carried (Sonnet-tier models think by
+# default and can spend the whole max_tokens budget on it) now rides
+# aicfg.thinking_kwargs, keyed on the model actually used.
 MAX_TOKENS = 2048
-
-# claude-sonnet-5 runs extended thinking ON by default (the Sonnet 4.6 this tier
-# replaced did not). Compose/tailor/refine/learned-rule are all strict-JSON or
-# plain-text structured calls whose prompts were written for no thinking: with it
-# on, the model spends the entire max_tokens budget thinking and returns an empty
-# text block (stop_reason=max_tokens), so every draft and plan fails to parse.
-# Disable it — Sonnet 5 accepts "disabled" (Fable 5 would 400). Shared so every
-# Sonnet-tier call stays consistent.
-THINKING = {"type": "disabled"}
 
 # Em dash (U+2014) / horizontal bar (U+2015) -> ", ". The one AI-tell hard rule
 # safe to auto-fix on output: collapses only HORIZONTAL whitespace so paragraph
@@ -286,14 +281,15 @@ def build_user_message(
     return "\n\n".join(parts)
 
 
-async def generate(client, system: str, user: str) -> tuple[str, list]:
-    """One Sonnet call. The SDK already retries 429/5xx; nothing to parse, so
+async def generate(client, system: str, user: str, model: str | None = None) -> tuple[str, list]:
+    """One model call. The SDK already retries 429/5xx; nothing to parse, so
     no application-level retry. Raises ComposeError on an empty draft. Returns
     (draft, [usage]) so the endpoint can record spend."""
+    model = model or aicfg.DEFAULTS["compose"]
     resp = await client.messages.create(
-        model=MODEL,
+        model=model,
         max_tokens=MAX_TOKENS,
-        thinking=THINKING,
+        **aicfg.thinking_kwargs(model),
         # cache_control: free win if the voice guide ever clears Sonnet's
         # cache minimum; harmless below it.
         system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
