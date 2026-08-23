@@ -1,0 +1,69 @@
+name: Bug report
+description: Something in jshq behaves incorrectly.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing a report. jshq runs entirely on your own machine, so
+        the details below are what let us reproduce the problem.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what happened instead?
+      placeholder: |
+        1. Steps to reproduce
+        2. ...
+
+        Expected: ...
+        Actual: ...
+    validations:
+      required: true
+  - type: input
+    id: error-code
+    attributes:
+      label: Error code
+      description: "If the app showed a code like [JSHQ-205], paste it here."
+      placeholder: "JSHQ-###"
+    validations:
+      required: false
+  - type: input
+    id: jshq-version
+    attributes:
+      label: jshq version
+      description: "The Version line from `pip show jshq` (for example, 0.2.0)."
+    validations:
+      required: true
+  - type: input
+    id: python-version
+    attributes:
+      label: Python version
+      description: "The output of `python --version`."
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS
+        - Windows
+        - Linux
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant output
+      description: Terminal output or a traceback, if any. This is rendered as code, so no formatting needed.
+      render: shell
+    validations:
+      required: false
+  - type: checkboxes
+    id: no-secrets
+    attributes:
+      label: Before submitting
+      options:
+        - label: "I have removed any API keys, personal data, or private company details from this report."
+          required: true
