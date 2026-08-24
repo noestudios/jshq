@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "jshq"
-version = "0.2.0"
+version = "0.2.1"
 description = "Local-first, zero-tracking job-search dashboard"
 readme = "README.md"
 authors = [{ name = "Chris Hays" }]
