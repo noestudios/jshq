@@ -68,8 +68,16 @@ _NOISE_RE = re.compile(
     r"\b(?:remote|hybrid|onsite|on-site|usa|u\.s\.a|u\.s|united states|"
     r"of america|metro(?:politan)? area|metro area)\b"
 )
-_CITY_LEAD_RE = re.compile(r"^(?:greater|metro|metropolitan|the)\s+")
-_CITY_TAIL_RE = re.compile(r"\s+(?:area|region|metro|metropolitan)$")
+# One optional descriptor word stripped off each end of a city segment
+# ("Greater Naperville Area" → "Naperville"). Word-list ops, not regexes —
+# suffix patterns like `\s+…$` scan quadratically on adversarial input, and
+# location strings arrive from scraped postings.
+_CITY_LEAD_WORDS = {"greater", "metro", "metropolitan", "the"}
+_CITY_TAIL_WORDS = {"area", "region", "metro", "metropolitan"}
+
+# Scraped location fields are a line of text; anything longer is garbage and
+# only feeds the regex passes below pathological input.
+_LOCATION_MAX_CHARS = 200
 
 _EARTH_RADIUS_MI = 3958.7613
 
@@ -112,8 +120,11 @@ def _lookup_city(city: str, usps: str) -> tuple[float, float, str] | None:
     trailing words ('Naperville Crossings' → 'Naperville') until a hit or one word remains —
     never the leading word, which is the head noun."""
     idx = _load()
-    city = _CITY_TAIL_RE.sub("", _CITY_LEAD_RE.sub("", _normplace(city)))
-    words = city.split()
+    words = _normplace(city).split()
+    if len(words) > 1 and words[0] in _CITY_LEAD_WORDS:
+        words = words[1:]
+    if len(words) > 1 and words[-1] in _CITY_TAIL_WORDS:
+        words = words[:-1]
     while words:
         hit = idx.get((" ".join(words), usps))
         if hit is not None:
@@ -126,6 +137,7 @@ def _geocode_full(location: str | None) -> tuple[float, float, str] | None:
     """(lat, lng, 'Proper Name, ST') for a free-text location, else None."""
     if not location:
         return None
+    location = location[:_LOCATION_MAX_CHARS]
     cleaned = _NOISE_RE.sub(" ", re.sub(r"\([^)]*\)", " ", location.lower()))
     segments = [s.strip() for s in re.split(r"[,/|]", cleaned) if s.strip()]
     if not segments:

@@ -204,7 +204,8 @@ async def parse_job_url(url: str, *, client=None, model: str | None = None) -> d
     parsed = urlparse((url or "").strip())
     if parsed.scheme not in ("http", "https") or not parsed.hostname:
         raise JobParseError("That doesn't look like a web URL.")
-    if "linkedin.com" in parsed.hostname.lower():
+    host = parsed.hostname.lower()
+    if host == "linkedin.com" or host.endswith(".linkedin.com"):
         raise JobParseError(
             "LinkedIn postings can't be auto-pulled. Open the role on the company's "
             "own careers site and paste that URL, or fill the fields in manually."
