@@ -90,6 +90,17 @@ async function request(method, path, body) {
   return parseBody(response);
 }
 
+/* When a full-board refresh trigger last succeeded from this session (any
+   caller — the stale auto-trigger or a banner button). Today's stale banner
+   reads it so it only claims a refresh is coming when one really was issued;
+   the copy used to assert a trigger that a tab left mounted through a sleep
+   never fired. */
+let refreshTriggerAt = 0;
+
+export function refreshTriggerAgo() {
+  return refreshTriggerAt ? Date.now() - refreshTriggerAt : Infinity;
+}
+
 export const api = {
   listJobs: ({ company_id } = {}) =>
     request("GET", `/api/jobs${company_id ? `?company_id=${company_id}` : ""}`),
@@ -139,7 +150,11 @@ export const api = {
   refreshStatus: () => request("GET", "/api/refresh/status"),
   backupStatus: () => request("GET", "/api/backup/status"),
   // body is optional: {scope: "failed"} retries only the failing boards.
-  triggerRefresh: (body) => request("POST", "/api/refresh", body),
+  triggerRefresh: async (body) => {
+    const r = await request("POST", "/api/refresh", body);
+    refreshTriggerAt = Date.now();
+    return r;
+  },
   listCompanies: () => request("GET", "/api/companies"),
   getCompany: (id) => request("GET", `/api/companies/${id}`),
   refreshCompanyBoard: (id) => request("POST", `/api/companies/${id}/refresh`),

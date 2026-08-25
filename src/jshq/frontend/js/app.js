@@ -148,8 +148,17 @@ async function render() {
 }
 
 /* the scheduled refresh is best-effort (the machine may sleep
-   through it); this staleness check on load is the guarantee. */
+   through it); this staleness check is the guarantee. It runs on load AND
+   whenever the tab becomes visible again: a load-only check lied through an
+   overnight sleep — the tab stays mounted, the data goes stale, and no load
+   ever re-runs it. The throttle keeps tab-switching from hammering
+   /api/refresh/status. */
+const STALE_CHECK_THROTTLE_MS = 5 * 60 * 1000;
+let lastStaleCheck = 0;
+
 async function checkStaleRefresh() {
+  if (Date.now() - lastStaleCheck < STALE_CHECK_THROTTLE_MS) return;
+  lastStaleCheck = Date.now();
   let status;
   try {
     status = await api.refreshStatus();
@@ -181,14 +190,18 @@ async function checkStaleRefresh() {
   }
 }
 
+let refreshPollTimer = null; // one poll loop, however many visibility re-checks find it running
+
 function pollUntilRefreshed() {
+  if (refreshPollTimer) return;
   let misses = 0;
-  const timer = setInterval(async () => {
+  refreshPollTimer = setInterval(async () => {
     try {
       const status = await api.refreshStatus();
       misses = 0;
       if (!status.running) {
-        clearInterval(timer);
+        clearInterval(refreshPollTimer);
+        refreshPollTimer = null;
         toast("Job boards refreshed");
         if (status.refresh_error) buzz("refresh:" + status.refresh_error.at);
         else chime("refresh:" + (status.refresh_report?.at || "done"));
@@ -197,7 +210,10 @@ function pollUntilRefreshed() {
     } catch {
       // Tolerate blips before giving up. This is the load-time background
       // watcher, so the give-up stays quiet — the user never asked for it.
-      if (++misses >= 3) clearInterval(timer);
+      if (++misses >= 3) {
+        clearInterval(refreshPollTimer);
+        refreshPollTimer = null;
+      }
     }
   }, 5000);
 }
@@ -217,6 +233,13 @@ document.querySelector(".skip-link")?.addEventListener("click", (event) => {
 
 applyTheme(); // boot script already set data-theme; this re-syncs the meta + registers the OS listener
 boot();
+
+/* Wake-up path for the staleness guarantee (see checkStaleRefresh). Safe on a
+   first-run install: the function's own connectable/throttle guards make the
+   visibility checks no-ops until a pullable board exists. */
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") checkStaleRefresh();
+});
 
 /* First-run gate (Phase 4): on a fresh install (setup untouched, no company
    yet) the wizard is the whole application — EVERY hash lands on #/welcome

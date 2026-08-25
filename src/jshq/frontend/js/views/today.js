@@ -8,7 +8,7 @@
    day and the "new" highlight persists across in-app nav but clears on a
    browser reload. */
 
-import { api } from "../api.js";
+import { api, refreshTriggerAgo } from "../api.js";
 import { fmtReminderDue, localToday, openReminderModal } from "../lib/reminderModal.js";
 import {
   emptyState,
@@ -32,6 +32,9 @@ import { isNearMiss, parseFlags } from "./jobs.js";
 
 const LAST_VISIT_KEY = "hq_last_visit";
 const STALE_MS = 12 * 60 * 60 * 1000;
+// A trigger issued this recently is still spinning up (status.running flips
+// within one ~5s poll); past it, an issued trigger evidently didn't take.
+const RECENT_TRIGGER_MS = 90 * 1000;
 const BACKUP_STALE_MS = 26 * 60 * 60 * 1000; // nightly at 02:00 + slack
 const FALLBACK_DAYS = 7; // first load ever: "recent" = last 7 days
 const UPCOMING_DAYS = 7;
@@ -334,8 +337,8 @@ function isConnectivityError(status) {
   return !!status && CONNECTIVITY_MARKERS.some((m) => status.includes(m));
 }
 
-function retryBtn() {
-  return ` <button type="button" class="banner-retry" data-action="retry-refresh">Retry now</button>`;
+function retryBtn(label = "Retry now") {
+  return ` <button type="button" class="banner-retry" data-action="retry-refresh">${label}</button>`;
 }
 
 /* Scoped variant for the adapter-errors banner when enough boards are failing:
@@ -531,7 +534,11 @@ function banners() {
   // nothing stale or empty to warn about until the first scheduled refresh.
   const hasJobs = state.jobs.some((j) => j.status === "active");
   // While a refresh is actually running the green bar below covers it, so the
-  // "stale — a refresh was triggered" amber would just be redundant.
+  // stale amber would just be redundant. When it does show, only claim a
+  // refresh is coming if a trigger really was issued just now — this copy used
+  // to assert one unconditionally, which lied whenever a tab left mounted
+  // through a sleep went stale without a page load (the auto-trigger runs in
+  // app.js on load + visibility, never from here).
   if (stale && !offline && !running && !(dayOne && hasJobs)) {
     // "Connecting" only when something actually is (a board mid-onboarding);
     // a skipped-company install has nothing in flight, and claiming otherwise
@@ -545,7 +552,12 @@ function banners() {
               ? `<div class="stale-banner banner-progress">Connecting your first job board — openings land here as soon as they're pulled.</div>`
               : `<div class="stale-banner banner-progress">Nothing on the board yet — openings land here once your first company's job board is pulled.</div>`,
           }
-        : { key: "stale-boards", html: `<div class="stale-banner">Job boards are stale${bannerTime(state.lastRefresh)} — a refresh has been triggered automatically.</div>` }
+        : {
+            key: "stale-boards",
+            html: refreshTriggerAgo() < RECENT_TRIGGER_MS
+              ? `<div class="stale-banner">Job boards are stale${bannerTime(state.lastRefresh)} — refresh starting…</div>`
+              : `<div class="stale-banner">Job boards are stale${bannerTime(state.lastRefresh)}.${retryBtn("Refresh now")}</div>`,
+          }
     );
   }
   if (offline && !running) {
