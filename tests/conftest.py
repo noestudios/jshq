@@ -201,6 +201,33 @@ def seed_application(db, seed_job):
 
 
 @pytest.fixture
+def seed_next_step(db, seed_application):
+    """Factory: insert a next_steps row directly, return its id.
+
+    Timestamps default to a fixed past instant so tests can assert that
+    edits bump updated_at (same-second API writes would otherwise tie).
+    """
+    counter = itertools.count(1)
+
+    def _seed(application_id: int | None = None, **overrides) -> int:
+        if application_id is None:
+            application_id = seed_application()
+        fields = {
+            "application_id": application_id,
+            "title": "Test next step",
+            "due_date": "2026-06-20",
+            "status": "pending",
+            "ics_uid": f"seed-ns-{next(counter)}@jobsearchhq",
+            "created_at": "2026-01-01 00:00:00",
+            "updated_at": "2026-01-01 00:00:00",
+        }
+        fields.update(overrides)
+        return _insert(db, "next_steps", fields)
+
+    return _seed
+
+
+@pytest.fixture
 def seed_activity(db):
     """Factory: insert an activities row directly, return its id."""
 

@@ -1212,6 +1212,17 @@ main#view {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* The applications list rides a short applied-date on .company-loc beside the
+   title. The base guard above (min-width:0, first to ellipsise) is right for a
+   job's expendable LOCATION but wrong for a fixed date: when a long title
+   wrapped, the flex algorithm dumped all the shrink on the only min-width:0
+   sibling and clipped "Aug 20" to "Aug…". A date is cheap and fixed — reserve
+   its slot and let the title absorb the wrap instead. Scoped to .row-date so
+   the Companies/Jobs location slots keep the expendable behavior. */
+.company-row-head > .company-loc.row-date {
+  flex-shrink: 0;
+  overflow: visible;
+}
 
 /* .company-loc is a LOCATION slot, and its treatment says so: 10px micro-caps,
    ink-mute, first to ellipsise. That is a deliberate "this is the expendable
@@ -3758,10 +3769,30 @@ select {
   cursor: pointer;
 }
 
+/* A next-step row (v10: first-class, with Done/Dismiss actions) deep-links to
+   its application via an inner <a>-title — strip the anchor look so it reads
+   as a row title; the base .reminder-row supplies layout + hover. */
+.reminder-nextstep,
+.reminder-nextstep a.reminder-title { text-decoration: none; color: inherit; }
+.reminder-nextstep a.reminder-title:hover { text-decoration: underline; }
 .reminder-row.reminder-done .reminder-title {
   color: var(--t-rem-done);
   text-decoration: line-through;
 }
+/* Resolved next-steps: done strikes the title (rule above); dismissed only
+   mutes — the pair separates by text + decoration, never hue
+   (colour-blind-safe). The status word rides the muted-ink badge on both. */
+.reminder-row.reminder-dismissed .reminder-title { color: var(--t-rem-done); }
+.rem-badge.rem-resolved { background: var(--t-rule-soft); color: var(--t-rem-done); }
+
+/* Next-step add form (application detail): title grows, date + Add trail. */
+.nextstep-add {
+  display: flex;
+  align-items: center;
+  gap: var(--t-space-4);
+  margin-top: var(--t-space-4);
+}
+.nextstep-add [data-nextstep-title] { flex: 1 1 auto; min-width: 0; }
 
 .reminder-main {
   display: flex;
@@ -3876,6 +3907,9 @@ select {
 /* rem-event is the KIND of row, not its state — neutral, matching
    .cal-chip-event. Emitted by Calendar and Today, so both change. */
 .rem-badge.rem-event { background: var(--t-tag-bg); color: var(--t-tag-ink); }
+/* rem-nextstep is likewise KIND, not state (a pending next-step's state badge
+   is rem-overdue/rem-today/rem-upcoming) — same neutral tag pair. */
+.rem-badge.rem-nextstep { background: var(--t-tag-bg); color: var(--t-tag-ink); }
 
 /* Due/overdue reminders lead the Today view — accent edge like the
    near-miss band, in the action hue. */
@@ -4080,6 +4114,11 @@ select {
    metadata, so it takes the one neutral tile under the tag-soup rule instead of
    the civic blue it was borrowing from the near-miss band. */
 .cal-chip-event { background: var(--t-tag-bg); color: var(--t-tag-ink); }
+/* A next-step chip composes a KIND cue (neutral left rule + the "→" prefix in
+   the markup) with whichever STATE class applies — pending/overdue for live
+   rows, cal-chip-done (muted + line-through) for resolved ones. Additive, so
+   no new hue and no palette gate. */
+.cal-chip-nextstep { border-left: 2px solid var(--t-tag-ink); padding-left: calc(var(--t-space-3) - 2px); }
 
 .cal-more {
   font-family: var(--t-font-label);

@@ -322,6 +322,34 @@ class ReminderPatch(BaseModel):
         return self
 
 
+class NextStepIn(BaseModel):
+    application_id: int
+    title: NonEmptyStr
+    due_date: datetime.date | None = None  # undated is allowed: listed on the app, off calendar/ics
+
+
+class NextStepPatch(BaseModel):
+    """Status flips and edits. Only fields explicitly sent are applied."""
+
+    title: NonEmptyStr | None = None
+    due_date: datetime.date | None = None
+    status: Literal["pending", "done", "dismissed"] | None = None
+
+    @model_validator(mode="after")
+    def _at_least_one(self):
+        if not self.model_fields_set:
+            raise ValueError("nothing to update")
+        # None doubles as the not-sent sentinel; an EXPLICIT null must be
+        # rejected for title (NOT NULL column — SQL NULL is a 500) and status
+        # (not a state). due_date MAY be explicitly nulled: undated steps are
+        # legitimate — they just stay off the calendar and the feed.
+        if "title" in self.model_fields_set and self.title is None:
+            raise ValueError("title cannot be null")
+        if "status" in self.model_fields_set and self.status is None:
+            raise ValueError("status cannot be null")
+        return self
+
+
 class ActivityIn(BaseModel):
     entity_type: Literal["job", "contact", "company", "application", "general"]
     entity_id: int | None = None
@@ -374,19 +402,17 @@ class ApplicationIn(BaseModel):
     applied_date: datetime.date | None = None
     resume_version: str | None = None
     cover_note: str | None = None
-    next_step: str | None = None
-    next_step_date: datetime.date | None = None
 
 
 class ApplicationUpdate(BaseModel):
-    """PUT body — job_id is immutable, set at creation only."""
+    """PUT body — job_id is immutable, set at creation only. next_step fields
+    live in the next_steps table since v10; stale clients sending them are
+    silently ignored (pydantic drops unknown keys)."""
 
     status: ApplicationStatus
     applied_date: datetime.date | None = None
     resume_version: str | None = None
     cover_note: str | None = None
-    next_step: str | None = None
-    next_step_date: datetime.date | None = None
 
 
 class TailorIn(BaseModel):

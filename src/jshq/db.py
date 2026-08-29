@@ -65,12 +65,52 @@ def _add_missing_columns(conn: sqlite3.Connection) -> None:
                 conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
 
 
+def _backfill_next_steps(conn: sqlite3.Connection) -> None:
+    """One-time v10 migration: promote applications.next_step/next_step_date
+    into next_steps rows. Gated by a settings flag rather than NOT EXISTS —
+    after go-live a user can legitimately delete every row for an app, and a
+    bare existence check would resurrect it at next startup. The legacy fields
+    are nulled after migrating (belt and suspenders). The backfilled uid keeps
+    the legacy app-nextstep-{app_id} shape so already-subscribed calendars
+    update in place; a closed app's leftover value migrates as dismissed
+    history, not live work. COALESCE(status,'') deliberately treats NULL-status
+    applications as open."""
+    done = conn.execute(
+        "SELECT value FROM settings WHERE key = 'next_steps_backfilled'"
+    ).fetchone()
+    if done and done["value"] == "1":
+        return
+    conn.execute(
+        """INSERT INTO next_steps
+               (application_id, title, due_date, status, ics_uid, created_at, updated_at)
+           SELECT a.id,
+                  COALESCE(NULLIF(TRIM(a.next_step), ''), 'Next step'),
+                  NULLIF(a.next_step_date, ''),
+                  CASE WHEN COALESCE(a.status, '') IN ('rejected', 'withdrawn')
+                       THEN 'dismissed' ELSE 'pending' END,
+                  'app-nextstep-' || a.id || '@jobsearchhq',
+                  a.updated_at, a.updated_at
+           FROM applications a
+           WHERE TRIM(COALESCE(a.next_step, '')) != ''
+              OR COALESCE(a.next_step_date, '') != ''"""
+    )
+    conn.execute(
+        """UPDATE applications SET next_step = NULL, next_step_date = NULL
+           WHERE TRIM(COALESCE(next_step, '')) != ''
+              OR COALESCE(next_step_date, '') != ''"""
+    )
+    conn.execute(
+        "INSERT OR REPLACE INTO settings (key, value) VALUES ('next_steps_backfilled', '1')"
+    )
+
+
 def init_db(db_path: Path = DB_PATH) -> None:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = connect(db_path)
     try:
         conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
         _add_missing_columns(conn)
+        _backfill_next_steps(conn)
         # 'checking' is stamped and committed BEFORE the fire-and-forget detect/
         # pull task runs; the task writes the terminal status only on completion.
         # A process interrupted mid-check (Ctrl-C, crash, or a shutdown cancel,

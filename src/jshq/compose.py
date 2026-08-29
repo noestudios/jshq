@@ -181,7 +181,7 @@ def _salary_line(job: sqlite3.Row) -> str:
 def _activity_line(row: sqlite3.Row) -> str:
     """One bounded timeline line; JSON-content rows summarize to a phrase."""
     content = row["content"] or ""
-    if row["type"] in ("dismissal", "applied", "compose"):
+    if row["type"] in ("dismissal", "applied", "compose", "next_step"):
         try:
             data = json.loads(content or "{}")
         except json.JSONDecodeError:
@@ -192,6 +192,13 @@ def _activity_line(row: sqlite3.Row) -> str:
                 content += f" ({data['note']})"
         elif row["type"] == "applied":
             content = "applied"
+        elif row["type"] == "next_step":
+            content = (
+                f"next step {data.get('action', '?')}"
+                f"{' (auto)' if data.get('auto') else ''}: {data.get('title', '?')}"
+            )
+            if data.get("due_date"):
+                content += f" (due {data['due_date']})"
         else:
             draft = (data.get("draft") or "").replace("\n", " ")
             content = f"drafted {data.get('intent', '?')}: \"{draft[:200]}\""

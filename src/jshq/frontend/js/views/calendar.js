@@ -13,6 +13,7 @@ const MAX_CHIPS = 3;
 const state = {
   reminders: [],
   events: [], // logged meetings/interviews
+  nextSteps: [], // applications' next-step rows (v10; pending + resolved history)
   year: null,
   month: null, // 0-based
   selectedDate: null, // YYYY-MM-DD
@@ -22,9 +23,10 @@ const state = {
 let root = null;
 
 async function load() {
-  [state.reminders, state.events] = await Promise.all([
+  [state.reminders, state.events, state.nextSteps] = await Promise.all([
     api.listReminders(),
     api.listActivities({ types: "meeting,interview" }),
+    api.listNextSteps(),
   ]);
 }
 
@@ -46,12 +48,31 @@ function itemsOn(dateStr) {
   const events = state.events
     .filter((a) => a.date === dateStr)
     .map((a) => ({ kind: "event", time: null, event: a }));
-  return [...reminders, ...events].sort((a, b) => (a.time || "").localeCompare(b.time || ""));
+  const nextSteps = state.nextSteps
+    .filter((n) => n.due_date === dateStr)
+    .map((n) => ({ kind: "nextstep", time: null, nextStep: n }));
+  return [...reminders, ...events, ...nextSteps].sort((a, b) =>
+    (a.time || "").localeCompare(b.time || "")
+  );
 }
 
 function chip(item, today) {
   if (item.kind === "event") {
     return `<div class="cal-chip cal-chip-event" title="${esc(item.event.content || item.event.type)}">${esc(item.event.type)}</div>`;
+  }
+  if (item.kind === "nextstep") {
+    // Reuse the reminder overdue/pending lightness ramp so overdue still reads;
+    // the leading arrow (a non-colour cue) marks it as a next-step, not a
+    // reminder — colour-blind-safe without a new hue. Resolved rows stay on
+    // the grid with the done treatment (muted + line-through); done vs
+    // dismissed is spelled out in the tooltip and on the detail row.
+    const n = item.nextStep;
+    const cls =
+      n.status !== "pending" ? "cal-chip-done"
+      : n.due_date < today ? "cal-chip-overdue"
+      : "cal-chip-pending";
+    const label = n.status === "pending" ? "Next step" : `Next step (${n.status})`;
+    return `<div class="cal-chip cal-chip-nextstep ${cls}" title="${label} — ${esc(n.entity_label)}">→ ${esc(n.title)}</div>`;
   }
   const r = item.reminder;
   const cls = r.done ? "cal-chip-done" : r.due_date < today ? "cal-chip-overdue" : "cal-chip-pending";
@@ -116,6 +137,36 @@ function detailItem(item, today) {
           <span class="rem-badge rem-event">${esc(a.type)}</span>
           <p class="rem-notes">${esc(a.content || "(no notes)")}</p>
         </div>
+      </div>`;
+  }
+  if (item.kind === "nextstep") {
+    // First-class row (v10): the title deep-links to the application (where the
+    // step is edited); pending rows carry Done/Dismiss right here. The inner
+    // <a> has its own data-action so closest() stops on it and native hash nav
+    // runs (the download-ics precedent); resolved rows show the status word —
+    // done also strikes the title, dismissed only mutes, so the pair reads
+    // without colour.
+    const n = item.nextStep;
+    const resolved = n.status !== "pending";
+    const overdue = !resolved && today && n.due_date < today;
+    const badge = resolved
+      ? `<span class="rem-badge rem-resolved">${n.status}</span>`
+      : `<span class="rem-badge ${overdue ? "rem-overdue" : "rem-nextstep"}">${overdue ? "overdue" : "next step"}</span>`;
+    return `
+      <div class="reminder-row reminder-nextstep${n.status === "done" ? " reminder-done" : ""}${n.status === "dismissed" ? " reminder-dismissed" : ""}">
+        <div class="reminder-main">
+          ${badge}
+          <a class="reminder-title" href="#/applications/${n.application_id}" data-action="open-application">→ ${esc(n.title)}</a>
+          <span class="rem-entity">${esc(n.entity_label)}</span>
+        </div>
+        ${
+          resolved
+            ? ""
+            : `<div class="reminder-actions">
+                <button class="btn btn-ghost" data-action="nextstep-dismiss" data-id="${n.id}">Dismiss</button>
+                <button class="btn" data-action="nextstep-done" data-id="${n.id}">Done</button>
+              </div>`
+        }
       </div>`;
   }
   const r = item.reminder;
@@ -249,6 +300,17 @@ async function toggleDone(id) {
   }
 }
 
+async function resolveNextStep(id, status) {
+  try {
+    const saved = await api.patchNextStep(id, { status });
+    state.nextSteps = state.nextSteps.map((n) => (n.id === saved.id ? saved : n));
+    paint();
+    toast(status === "done" ? "Done" : "Dismissed");
+  } catch (error) {
+    toast(error.detail || error.message, { error: true });
+  }
+}
+
 function addReminder() {
   openReminderModal({
     prefill: { due_date: state.selectedDate || localToday() },
@@ -301,6 +363,16 @@ function onClick(event) {
       break;
     case "toggle-done":
       toggleDone(Number(target.dataset.id));
+      break;
+    case "nextstep-done":
+      resolveNextStep(Number(target.dataset.id), "done");
+      break;
+    case "nextstep-dismiss":
+      resolveNextStep(Number(target.dataset.id), "dismissed");
+      break;
+    case "open-application":
+      // Same shape as download-ics: the anchor's own data-action stops
+      // closest() here and the native href hash-navigates.
       break;
     case "download-ics":
       // The link carries its own data-action so closest() stops here instead of

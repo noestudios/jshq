@@ -50,6 +50,8 @@ from jshq.models import (
     JobElevateIn,
     JobParseUrlIn,
     JobStatusIn,
+    NextStepIn,
+    NextStepPatch,
     PersonaIn,
     RefineTellsIn,
     RefreshIn,
@@ -896,9 +898,7 @@ async def elevate_job(
 # from job detail ("Start application" → drafting) or by the jobs-PATCH applied
 # hook. Timestamps written explicitly (v5 column migration carries no default).
 
-APPLICATION_COLUMNS = (
-    "status", "applied_date", "resume_version", "cover_note", "next_step", "next_step_date",
-)
+APPLICATION_COLUMNS = ("status", "applied_date", "resume_version", "cover_note")
 
 APPLICATION_SELECT = """
     SELECT a.*, j.title AS job_title, j.url AS job_url, j.status AS job_status,
@@ -944,9 +944,8 @@ def _fetch_application(db: sqlite3.Connection, application_id: int) -> dict:
 
 def _application_values(body: ApplicationIn | ApplicationUpdate) -> list:
     data = body.model_dump()
-    for field in ("applied_date", "next_step_date"):
-        if data[field] is not None:
-            data[field] = data[field].isoformat()
+    if data["applied_date"] is not None:
+        data["applied_date"] = data["applied_date"].isoformat()
     return [data[col] for col in APPLICATION_COLUMNS]
 
 
@@ -1075,6 +1074,10 @@ async def update_application(
     )
     if body.status == "applied":
         _ensure_applied(db, row["job_id"])
+    if body.status in ("rejected", "withdrawn") and row["status"] not in (
+        "rejected", "withdrawn",
+    ):
+        _dismiss_pending_next_steps(db, application_id)
     # Log every real status transition to the timeline EXCEPT the genuine
     # first-apply promotion, which _ensure_applied's job-level 'applied' row
     # already represents. Demotions back into applied (screen/offer/… → applied)
@@ -1113,6 +1116,7 @@ async def delete_application(
             f"DELETE FROM {table} WHERE entity_type = 'application' AND entity_id = ?",
             (application_id,),
         )
+    db.execute("DELETE FROM next_steps WHERE application_id = ?", (application_id,))
     _delete_tailorings(db, [application_id])
     db.execute("DELETE FROM applications WHERE id = ?", (application_id,))
     # The job's 'applied' activity stays (history). Only an applied job
@@ -3460,12 +3464,153 @@ def _reminder_values(body: ReminderIn) -> list:
 ICS_MEDIA_TYPE = "text/calendar; charset=utf-8"
 
 
+# Application next steps (v10): first-class rows, promoted from the old
+# applications.next_step field pair (backfilled in db.py). Completing or
+# dismissing a step is a status flip that KEEPS the row — the in-app calendar
+# shows resolved steps with status styling, while the .ics feed stays
+# pending-only (the reminder convention: subscribed clients drop missing UIDs).
+# Closing an application (rejected/withdrawn) auto-dismisses its pending steps
+# via _dismiss_pending_next_steps, so list reads never need an app-status gate.
+# The label ships from here (one definition; frontend never re-derives).
+
+NEXT_STEP_SELECT = """
+    SELECT ns.*,
+      (SELECT j.title || ' @ ' || c.name FROM applications a
+       JOIN jobs j ON j.id = a.job_id
+       JOIN companies c ON c.id = j.company_id
+       WHERE a.id = ns.application_id) AS entity_label
+    FROM next_steps ns
+"""
+
+
+def _next_step_rows(db: sqlite3.Connection, where: str = "", params: tuple = ()) -> list[dict]:
+    rows = db.execute(
+        f"""{NEXT_STEP_SELECT} {where}
+            ORDER BY ns.status != 'pending', ns.due_date IS NULL, ns.due_date, ns.id""",
+        params,
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def _fetch_next_step(db: sqlite3.Connection, next_step_id: int) -> dict:
+    found = _next_step_rows(db, "WHERE ns.id = ?", (next_step_id,))
+    if not found:
+        raise HTTPException(status_code=404, detail="next step not found")
+    return found[0]
+
+
+def _log_next_step_activity(
+    db: sqlite3.Connection, row: dict, action: str, auto: bool = False
+) -> None:
+    """Application-scoped durable record of a resolution — the field flip alone
+    would erase the fact the step ever happened. Machine-written type, like
+    'status'/'applied': deliberately NOT in ActivityIn's Literal."""
+    content = {"action": action, "title": row["title"], "due_date": row["due_date"]}
+    if auto:
+        content["auto"] = True
+    db.execute(
+        """INSERT INTO activities (entity_type, entity_id, date, type, content)
+           VALUES ('application', ?, ?, 'next_step', ?)""",
+        (row["application_id"], date.today().isoformat(), json.dumps(content)),
+    )
+
+
+def _dismiss_pending_next_steps(db: sqlite3.Connection, application_id: int) -> None:
+    """Closing an application dismisses its pending steps (honest state — they
+    stop nagging, stay on the calendar as dismissed). Reopening never undoes."""
+    for row in db.execute(
+        "SELECT * FROM next_steps WHERE application_id = ? AND status = 'pending'",
+        (application_id,),
+    ).fetchall():
+        db.execute(
+            """UPDATE next_steps SET status = 'dismissed',
+               resolved_at = ?, updated_at = datetime('now') WHERE id = ?""",
+            (_utc_now(), row["id"]),
+        )
+        _log_next_step_activity(db, dict(row), "dismissed", auto=True)
+
+
+def _next_step_feed_events(db: sqlite3.Connection) -> list[dict]:
+    """Pending, dated rows in the build_event shape (undated rows can't carry a
+    DTSTART; resolved rows follow the done-reminder convention and vanish)."""
+    rows = _next_step_rows(db, "WHERE ns.status = 'pending' AND ns.due_date IS NOT NULL")
+    return [row | {"due_time": None, "notes": None, "type": "next_step"} for row in rows]
+
+
+@app.get("/api/next-steps")
+async def list_next_steps(db: sqlite3.Connection = Depends(get_db)) -> list[dict]:
+    """All rows including done/dismissed — the calendar shows resolved steps
+    with status styling; Today and the due surfaces filter to pending in JS."""
+    return _next_step_rows(db)
+
+
+@app.post("/api/next-steps", status_code=201)
+async def create_next_step(body: NextStepIn, db: sqlite3.Connection = Depends(get_db)) -> dict:
+    if db.execute(
+        "SELECT 1 FROM applications WHERE id = ?", (body.application_id,)
+    ).fetchone() is None:
+        raise HTTPException(status_code=400, detail="application not found")
+    cursor = db.execute(
+        """INSERT INTO next_steps (application_id, title, due_date, ics_uid,
+                                   created_at, updated_at)
+           VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))""",
+        (
+            body.application_id,
+            body.title,
+            body.due_date.isoformat() if body.due_date else None,
+            f"{uuid4()}@jobsearchhq",
+        ),
+    )
+    db.commit()
+    return _fetch_next_step(db, cursor.lastrowid)
+
+
+@app.patch("/api/next-steps/{next_step_id}")
+async def patch_next_step(
+    next_step_id: int, body: NextStepPatch, db: sqlite3.Connection = Depends(get_db)
+) -> dict:
+    row = db.execute("SELECT * FROM next_steps WHERE id = ?", (next_step_id,)).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="next step not found")
+    fields = body.model_dump(exclude_unset=True)
+    if fields.get("due_date") is not None:
+        fields["due_date"] = fields["due_date"].isoformat()
+    new_status = fields.get("status")
+    if new_status is not None and new_status != row["status"]:
+        # resolved_at tracks the latest departure from pending; flipping back to
+        # pending clears it silently (the reminders undo convention — the
+        # earlier resolution's activity row stays in the timeline).
+        fields["resolved_at"] = None if new_status == "pending" else _utc_now()
+    assignments = ", ".join(f"{col} = ?" for col in fields)
+    db.execute(
+        f"UPDATE next_steps SET {assignments}, updated_at = datetime('now') WHERE id = ?",
+        [*fields.values(), next_step_id],
+    )
+    if new_status in ("done", "dismissed") and row["status"] == "pending":
+        logged = dict(row) | {k: fields[k] for k in ("title", "due_date") if k in fields}
+        _log_next_step_activity(db, logged, new_status)
+    db.commit()
+    return _fetch_next_step(db, next_step_id)
+
+
+@app.delete("/api/next-steps/{next_step_id}")
+async def delete_next_step(next_step_id: int, db: sqlite3.Connection = Depends(get_db)) -> dict:
+    if db.execute("SELECT 1 FROM next_steps WHERE id = ?", (next_step_id,)).fetchone() is None:
+        raise HTTPException(status_code=404, detail="next step not found")
+    db.execute("DELETE FROM next_steps WHERE id = ?", (next_step_id,))
+    db.commit()
+    return {"deleted": next_step_id}
+
+
 @app.get("/api/calendar.ics")
 async def calendar_feed(db: sqlite3.Connection = Depends(get_db)) -> Response:
-    """Rolling subscribable feed: pending reminders only. Done/deleted ones
-    simply vanish; subscribed clients drop missing UIDs."""
+    """Rolling subscribable feed: pending reminders + pending dated next steps.
+    Done/deleted reminders and resolved next steps simply vanish; subscribed
+    clients drop missing UIDs."""
     rows = _reminder_rows(db, "WHERE r.done = 0")
-    return Response(content=build_calendar(rows), media_type=ICS_MEDIA_TYPE)
+    return Response(
+        content=build_calendar(rows + _next_step_feed_events(db)), media_type=ICS_MEDIA_TYPE
+    )
 
 
 # Literal /ics paths are declared before any /api/reminders/{id} routes —

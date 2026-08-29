@@ -86,7 +86,9 @@ One nuance worth knowing: **"unknown" never rejects.** A posting with no salary 
 
 # Applying and tailoring
 
-When a job is worth pursuing, open it and click **Start application**. It moves into **Applications**, where you track its stage (drafting → applied → screening → interview → offer) and your next step.
+When a job is worth pursuing, open it and click **Start application**. It moves into **Applications**, where you track its stage (drafting → applied → screening → interview → offer) and your next steps.
+
+Each application has a **Next steps** list: concrete moves like "send work samples" or "prep for the screen", each with an optional date. Dated steps show up on the Calendar and on Today when they come due. Mark a step **Done** when it happens, or **Dismiss** it if it stops mattering; either way it stays visible as history (on the application and the calendar) and the completion is logged in the activity timeline. **Delete** is the only action that erases a step outright. Closing an application (rejected or withdrawn) dismisses its open steps automatically.
 
 The headline feature here is **tailoring**: the app can draft a resume and cover letter aimed at one specific posting:
 
@@ -125,7 +127,7 @@ Fit scoring, resume and cover-letter tailoring, message drafting, and URL parsin
 
 The app **suggests** follow-ups (after you apply, after you meet someone), but it never creates a reminder on its own. Each suggestion is a card you **Accept** or **Ignore**. You can also add your own reminder anywhere, and **Snooze** any reminder to tomorrow or next week.
 
-The **Calendar** lays everything out on a month grid, with two options at the top:
+The **Calendar** lays everything out on a month grid: reminders, logged meetings and interviews, and your applications' next steps (marked with a → arrow; done and dismissed ones stay visible, struck through). The subscribable feed carries pending reminders and pending dated next steps. Two options at the top:
 
 - **Copy feed URL**: a live feed for a calendar app **on this computer** (Apple Calendar: File ▸ New Calendar Subscription). The feed is served by the app on your machine, so web calendars like Google (which fetch from their own servers) can never reach it; use Download for those.
 - **Download**: saves a one-time snapshot file (`.ics`) you can import into any calendar. It won't update on its own; re-download to refresh it.

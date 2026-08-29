@@ -109,13 +109,11 @@ def test_update_bumps_updated_at(client, seed_application):
     before = client.get(f"/api/applications/{app_id}").json()["updated_at"]
     r = client.put(
         f"/api/applications/{app_id}",
-        json={"status": "drafting", "next_step": "tailor resume",
-              "next_step_date": "2026-06-20"},
+        json={"status": "drafting", "cover_note": "note to self"},
     )
     assert r.status_code == 200
     body = r.json()
-    assert body["next_step"] == "tailor resume"
-    assert body["next_step_date"] == "2026-06-20"
+    assert body["cover_note"] == "note to self"
     assert body["updated_at"] > before
 
 
@@ -191,6 +189,70 @@ def test_update_each_transition_logs_a_row(client, db, seed_application):
     client.put(f"/api/applications/{app_id}", json={"status": "rejected"})
     client.put(f"/api/applications/{app_id}", json={"status": "screen"})
     assert len(_status_activities(db, app_id)) == 2
+
+
+# --- closing an application auto-dismisses its pending next steps ---
+
+
+def _next_step_activities(db, app_id):
+    return db.execute(
+        """SELECT * FROM activities WHERE entity_type = 'application'
+           AND entity_id = ? AND type = 'next_step' ORDER BY id""",
+        (app_id,),
+    ).fetchall()
+
+
+def test_close_auto_dismisses_pending_steps(client, db, seed_application, seed_next_step):
+    app_id = seed_application(status="interview", applied_date="2026-06-01")
+    seed_next_step(application_id=app_id, title="Prep onsite", due_date="2026-08-28")
+    seed_next_step(application_id=app_id, title="Send references", due_date=None)
+    already = seed_next_step(application_id=app_id, title="Done earlier", status="done",
+                             resolved_at="2026-06-01T00:00:00+00:00")
+    client.put(f"/api/applications/{app_id}", json={"status": "rejected"})
+    rows = {r["title"]: r for r in db.execute(
+        "SELECT * FROM next_steps WHERE application_id = ?", (app_id,))}
+    assert rows["Prep onsite"]["status"] == "dismissed"
+    assert rows["Prep onsite"]["resolved_at"] is not None
+    assert rows["Send references"]["status"] == "dismissed"
+    assert rows["Done earlier"]["status"] == "done"  # already-resolved rows untouched
+    acts = _next_step_activities(db, app_id)
+    assert [json.loads(a["content"]) for a in acts] == [
+        {"action": "dismissed", "title": "Prep onsite", "due_date": "2026-08-28",
+         "auto": True},
+        {"action": "dismissed", "title": "Send references", "due_date": None,
+         "auto": True},
+    ]
+    assert already
+
+
+def test_reopen_leaves_steps_dismissed(client, db, seed_application, seed_next_step):
+    app_id = seed_application(status="interview", applied_date="2026-06-01")
+    seed_next_step(application_id=app_id, title="X")
+    client.put(f"/api/applications/{app_id}", json={"status": "rejected"})
+    client.put(f"/api/applications/{app_id}", json={"status": "interview"})
+    [row] = db.execute("SELECT * FROM next_steps WHERE application_id = ?", (app_id,))
+    assert row["status"] == "dismissed"
+    assert len(_next_step_activities(db, app_id)) == 1  # no second log on reopen
+
+
+def test_terminal_to_terminal_dismisses_nothing_twice(client, db, seed_application,
+                                                      seed_next_step):
+    app_id = seed_application(status="rejected", applied_date="2026-06-01")
+    seed_next_step(application_id=app_id, title="X")  # e.g. added post-close by hand
+    client.put(f"/api/applications/{app_id}", json={"status": "withdrawn"})
+    [row] = db.execute("SELECT * FROM next_steps WHERE application_id = ?", (app_id,))
+    assert row["status"] == "pending"  # only an open→closed transition dismisses
+    assert _next_step_activities(db, app_id) == []
+
+
+def test_delete_application_removes_next_steps(client, db, seed_application,
+                                               seed_next_step):
+    app_id = seed_application(status="drafting")
+    seed_next_step(application_id=app_id)
+    client.delete(f"/api/applications/{app_id}")
+    assert db.execute(
+        "SELECT 1 FROM next_steps WHERE application_id = ?", (app_id,)
+    ).fetchone() is None
 
 
 # --- jobs-PATCH symmetry ---

@@ -76,8 +76,8 @@ CREATE TABLE IF NOT EXISTS applications (
     status         TEXT,                        -- drafting/applied/screen/interview/offer/rejected/withdrawn
     resume_version TEXT,
     cover_note     TEXT,
-    next_step      TEXT,
-    next_step_date TEXT,
+    next_step      TEXT,                        -- DORMANT since v10: superseded by next_steps rows
+    next_step_date TEXT,                        -- (backfill nulls values; column kept — DROP COLUMN isn't worth a table rebuild)
     created_at     TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at     TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -110,6 +110,24 @@ CREATE TABLE IF NOT EXISTS reminders (
     created_at  TEXT NOT NULL DEFAULT (datetime('now')),  -- UTC; ICS DTSTAMP
     updated_at  TEXT NOT NULL DEFAULT (datetime('now'))   -- UTC; ICS SEQUENCE/LAST-MODIFIED
 );
+
+-- Application next steps (v10): first-class rows promoted from the old
+-- applications.next_step field pair. Multiple pending steps per application
+-- are allowed; done/dismissed rows are kept as history (they stay visible on
+-- the in-app calendar with status styling, and drop out of the .ics feed).
+CREATE TABLE IF NOT EXISTS next_steps (
+    id             INTEGER PRIMARY KEY,
+    application_id INTEGER NOT NULL REFERENCES applications(id),
+    title          TEXT NOT NULL,
+    due_date       TEXT,                             -- ISO date; NULL = undated (off calendar/ics)
+    status         TEXT NOT NULL DEFAULT 'pending',  -- pending/done/dismissed
+    ics_uid        TEXT,                             -- immutable; backfilled rows keep app-nextstep-{app_id}@jobsearchhq
+    resolved_at    TEXT,                             -- UTC; set when status leaves pending
+    created_at     TEXT NOT NULL DEFAULT (datetime('now')),  -- UTC
+    updated_at     TEXT NOT NULL DEFAULT (datetime('now'))   -- UTC; ICS DTSTAMP/SEQUENCE
+);
+
+CREATE INDEX IF NOT EXISTS idx_next_steps_application ON next_steps(application_id);
 
 -- Tailoring runs (Phase 7e): one AI pass per application producing
 -- a resume change plan + cover letter draft. change_plan is JSON
@@ -169,8 +187,8 @@ CREATE TABLE IF NOT EXISTS settings (
     value TEXT
 );
 
-INSERT OR IGNORE INTO settings (key, value) VALUES ('schema_version', '9');
-UPDATE settings SET value = '9' WHERE key = 'schema_version' AND CAST(value AS INTEGER) < 9;
+INSERT OR IGNORE INTO settings (key, value) VALUES ('schema_version', '10');
+UPDATE settings SET value = '10' WHERE key = 'schema_version' AND CAST(value AS INTEGER) < 10;
 
 -- Ingestion title filter: compiled from Settings → Sourcing inclusion rules,
 -- matched case-insensitively on word boundaries against job titles before

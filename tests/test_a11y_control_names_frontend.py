@@ -31,7 +31,9 @@ def test_contacts_controls_are_named():
 
 def test_applications_controls_are_named():
     js = _read("js/views/applications.js")
-    for name in ("Status", "Next step", "Resume version", "Cover note"):
+    # "New next step" is the add-form input in the Next steps section (v10) —
+    # the old inline "Next step" field pair was replaced by first-class rows.
+    for name in ("Status", "New next step", "Resume version", "Cover note"):
         assert f'aria-label="{name}"' in js, name
 
 
@@ -48,7 +50,7 @@ def test_date_fields_pass_a_purpose_label():
     apps = _read("js/views/applications.js")
     assert 'ariaLabel: "Last contact"' in contacts
     assert 'ariaLabel: "Applied"' in apps
-    assert 'ariaLabel: "Next step date"' in apps
+    assert 'ariaLabel: "New next step date"' in apps  # the v10 add-form picker
 
 
 # ---- #65 mobile nav tabs -------------------------------------------------

@@ -162,12 +162,12 @@ export function openActivityModal({ entity_type, entity_id, entity_label, onSave
   });
 }
 
-/* Side-effect rows (dismissal/applied/unapplied/compose/status) store JSON
-   content; render it readably. A type missing from this list falls through to
-   the raw content, which for a JSON payload means showing the JSON — so any
-   new side-effect type has to be added here as well as in main.py. */
+/* Side-effect rows (dismissal/applied/unapplied/compose/status/next_step)
+   store JSON content; render it readably. A type missing from this list falls
+   through to the raw content, which for a JSON payload means showing the JSON
+   — so any new side-effect type has to be added here as well as in main.py. */
 function activityText(activity) {
-  const sideEffect = ["dismissal", "applied", "unapplied", "compose", "status"];
+  const sideEffect = ["dismissal", "applied", "unapplied", "compose", "status", "next_step"];
   if (sideEffect.includes(activity.type)) {
     let payload = {};
     try {
@@ -187,6 +187,12 @@ function activityText(activity) {
       // Deliberately not "withdrawn": that is a real application status, and
       // this row means the apply was undone, not that the user withdrew.
       return "application reverted";
+    }
+    if (activity.type === "next_step") {
+      // {action: done|dismissed, title, due_date, auto?} — auto marks the
+      // dismissals that ride an application closing out.
+      if (!payload.action) return activity.content || "";
+      return `next step ${payload.action}${payload.auto ? " (auto)" : ""}: ${payload.title || "?"}${payload.due_date ? ` — due ${payload.due_date}` : ""}`;
     }
     if (activity.type === "status") {
       // from is null for legacy NULL-status rows; a payload without `to`

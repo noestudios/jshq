@@ -99,6 +99,7 @@ const sortCmp = () =>
 const state = {
   applications: [],
   reminders: [],
+  nextSteps: [], // first-class rows (v10); pending + resolved history, all apps
   suggestions: [], // pending reminder suggestions (followup_application cards)
   selectedId: null,
   activityCache: new Map(), // app.id -> merged job + application activities
@@ -121,22 +122,22 @@ let root = null;
 
 /* Mirrors ApplicationUpdate on the backend (job_id is immutable). */
 function payload(app, overrides = {}) {
-  const fields = [
-    "status", "applied_date", "resume_version", "cover_note", "next_step", "next_step_date",
-  ];
+  const fields = ["status", "applied_date", "resume_version", "cover_note"];
   const body = {};
   for (const field of fields) body[field] = app[field] ?? null;
   return { ...body, ...overrides };
 }
 
 async function load() {
-  const [applications, reminders, suggestions] = await Promise.all([
+  const [applications, reminders, nextSteps, suggestions] = await Promise.all([
     api.listApplications(),
     api.listReminders(),
+    api.listNextSteps(),
     api.getSuggestions(),
   ]);
   state.applications = applications;
   state.reminders = reminders;
+  state.nextSteps = nextSteps;
   state.suggestions = suggestions.reminders;
 }
 
@@ -153,7 +154,8 @@ function filtered() {
   return state.applications.filter((a) => {
     if (state.filters.status.size && !state.filters.status.has(a.status)) return false;
     if (!needle) return true;
-    const haystack = `${a.job_title} ${a.company_name} ${a.next_step || ""}`.toLowerCase();
+    const steps = pendingSteps(a).map((n) => n.title).join(" ");
+    const haystack = `${a.job_title} ${a.company_name} ${steps}`.toLowerCase();
     return haystack.includes(needle);
   });
 }
@@ -179,10 +181,30 @@ function fmtDue(iso) {
   return isNaN(d) ? iso : d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
+/* Next steps (v10): first-class rows in state.nextSteps. Client-side sort
+   mirrors the server (pending first, dated before undated) so local flips
+   land the row in its canonical slot without a refetch. */
+function stepsFor(app) {
+  return state.nextSteps
+    .filter((n) => n.application_id === app.id)
+    .sort(
+      (a, b) =>
+        (a.status !== "pending") - (b.status !== "pending") ||
+        (a.due_date === null) - (b.due_date === null) ||
+        (a.due_date || "").localeCompare(b.due_date || "") ||
+        a.id - b.id
+    );
+}
+
+function pendingSteps(app) {
+  return stepsFor(app).filter((n) => n.status === "pending");
+}
+
 function nextStepBadge(app) {
-  if (!app.next_step_date || !isOpen(app)) return "";
-  const cls = app.next_step_date <= localToday() ? "rem-overdue" : "rem-upcoming";
-  return `<span class="rem-badge ${cls}" title="${esc(fmtFullDate(app.next_step_date))}">due ${esc(fmtDue(app.next_step_date))}</span>`;
+  const next = pendingSteps(app).find((n) => n.due_date);
+  if (!next) return "";
+  const cls = next.due_date <= localToday() ? "rem-overdue" : "rem-upcoming";
+  return `<span class="rem-badge ${cls}" title="${esc(fmtFullDate(next.due_date))}">due ${esc(fmtDue(next.due_date))}</span>`;
 }
 
 /* "No longer listed", carried over from Jobs (owner review, 2026-08-13). The listing
@@ -207,13 +229,13 @@ function listRow(app) {
         <div class="co-row-rest">
           <div class="company-row-head">
             <span class="company-name">${fitChip(app)}${esc(app.job_title)}</span>
-            ${app.applied_date ? `<span class="company-loc" title="${esc(fmtFullDate(app.applied_date))}">${esc(fmtDue(app.applied_date))}</span>` : ""}
+            ${app.applied_date ? `<span class="company-loc row-date" title="${esc(fmtFullDate(app.applied_date))}">${esc(fmtDue(app.applied_date))}</span>` : ""}
           </div>
           <div class="company-meta">
             <span class="job-company">${esc(app.company_name)}</span>
             ${delistedBandHtml(app)}
             ${nextStepBadge(app)}
-            ${app.next_step ? `<span class="next-step-text">${esc(app.next_step)}</span>` : ""}
+            ${pendingSteps(app).length ? `<span class="next-step-text">${esc(pendingSteps(app)[0].title)}</span>` : ""}
           </div>
         </div>
       </div>
@@ -269,6 +291,59 @@ function remindersSection(app) {
       </div>
       ${suggestion ? suggestionCard(suggestion) : ""}
       ${rows.length ? rows.map(reminderRow).join("") : suggestion ? "" : emptyState("No linked reminders.")}
+    </div>`;
+}
+
+/* Next steps section (v10): pending rows carry Done / Dismiss / Delete —
+   resolving keeps the row as history (muted, explicit status word; done also
+   strikes the title) and logs a next_step activity on the timeline. Delete is
+   the only true erase, so it confirms. The add form's date field is name-only
+   (no data-field) to stay off the application autosave contract. */
+function stepRow(step) {
+  if (step.status === "pending") {
+    const badge = step.due_date
+      ? `<span class="rem-badge ${step.due_date <= localToday() ? "rem-overdue" : "rem-upcoming"}" title="${esc(fmtFullDate(step.due_date))}">due ${esc(fmtDue(step.due_date))}</span>`
+      : `<span class="rem-badge rem-upcoming">no date</span>`;
+    return `
+      <div class="reminder-row reminder-nextstep">
+        <div class="reminder-main">
+          ${badge}
+          <span class="reminder-title">→ ${esc(step.title)}</span>
+        </div>
+        <div class="reminder-actions">
+          <button class="btn btn-ghost" data-action="step-dismiss" data-id="${step.id}">Dismiss</button>
+          <button class="btn" data-action="step-done" data-id="${step.id}">Done</button>
+          <button type="button" class="doc-delete" data-action="step-delete" data-id="${step.id}" aria-label="Delete ${esc(step.title)}">✕</button>
+        </div>
+      </div>`;
+  }
+  return `
+    <div class="reminder-row reminder-nextstep ${step.status === "done" ? "reminder-done" : "reminder-dismissed"}">
+      <div class="reminder-main">
+        <span class="rem-badge rem-resolved">${step.status}</span>
+        <span class="reminder-title">→ ${esc(step.title)}</span>
+        ${step.due_date ? `<span class="reminder-time" title="${esc(fmtFullDate(step.due_date))}">${esc(fmtDue(step.due_date))}</span>` : ""}
+      </div>
+      <div class="reminder-actions">
+        <button class="btn btn-ghost" data-action="step-reopen" data-id="${step.id}">Reopen</button>
+        <button type="button" class="doc-delete" data-action="step-delete" data-id="${step.id}" aria-label="Delete ${esc(step.title)}">✕</button>
+      </div>
+    </div>`;
+}
+
+function nextStepsSection(app) {
+  const steps = stepsFor(app);
+  return `
+    <div class="section">
+      <div class="section-head">
+        <h2 class="section-title">Next steps</h2>
+      </div>
+      ${steps.length ? steps.map(stepRow).join("") : emptyState("No next steps — add the next concrete move.")}
+      <div class="nextstep-add">
+        <input data-nextstep-title aria-label="New next step" placeholder="e.g. send work samples" />
+        ${dateFieldHtml("", { name: "nextstep-date", ariaLabel: "New next step date" })}
+        <button class="btn btn-ghost" data-action="step-add">Add</button>
+      </div>
     </div>`;
 }
 
@@ -460,14 +535,6 @@ function detailPane(app) {
           ${dateFieldHtml(app.applied_date, { field: "applied_date", ariaLabel: "Applied", title: fmtFullDate(app.applied_date) })}
         </div>
         <div class="field">
-          <span class="field-label">Next step</span>
-          <input data-field="next_step" aria-label="Next step" value="${esc(app.next_step || "")}" placeholder="e.g. send work samples" />
-        </div>
-        <div class="field">
-          <span class="field-label">Next step date</span>
-          ${dateFieldHtml(app.next_step_date, { field: "next_step_date", ariaLabel: "Next step date", title: fmtFullDate(app.next_step_date) })}
-        </div>
-        <div class="field">
           <span class="field-label">Resume version</span>
           <input data-field="resume_version" aria-label="Resume version" value="${esc(app.resume_version || "")}" placeholder="stamped by Apply" />
         </div>
@@ -483,6 +550,8 @@ function detailPane(app) {
           <button class="btn btn-ghost btn-danger detail-delete" data-action="delete">Delete</button>
         </div>
       </div>
+
+      ${nextStepsSection(app)}
 
       ${tailoringSection(app)}
 
@@ -878,7 +947,10 @@ function template() {
 
 function renderStats() {
   const open = state.applications.filter(isOpen);
-  const due = open.filter((a) => a.next_step_date && a.next_step_date <= localToday());
+  const today = localToday();
+  const due = state.nextSteps.filter(
+    (n) => n.status === "pending" && n.due_date && n.due_date <= today
+  );
   setStats([
     { value: open.length, label: "Open" },
     { value: due.length, label: pluralize(due.length, "Step due", "Steps due") },
@@ -922,12 +994,15 @@ async function save(app, overrides, { quiet = false } = {}) {
     if (!quiet) {
       // status→applied flips the job and may spawn a follow-up suggestion;
       // refresh both cheap payloads so the card/timeline appear in place.
+      // Closing (rejected/withdrawn) auto-dismisses pending next steps
+      // server-side, so the rows refresh too.
       if (overrides.status) {
         state.activityCache.delete(app.id);
         try {
           state.suggestions = (await api.getSuggestions()).reminders;
+          state.nextSteps = await api.listNextSteps();
         } catch {
-          /* card just appears on the next load */
+          /* card/rows just appear on the next load */
         }
       }
       paint();
@@ -943,6 +1018,64 @@ async function save(app, overrides, { quiet = false } = {}) {
 function fieldValue(field, element) {
   const raw = element.value.trim();
   return raw || null;
+}
+
+async function patchStep(id, body, message) {
+  const app = selected();
+  try {
+    const saved = await api.patchNextStep(id, body);
+    state.nextSteps = state.nextSteps.map((n) => (n.id === saved.id ? saved : n));
+    if (app) {
+      // done/dismiss writes a next_step activity — refetch the timeline
+      state.activityCache.delete(app.id);
+      loadActivities(app);
+    }
+    paint();
+    if (message) toast(message);
+  } catch (error) {
+    toast(error.detail || error.message, { error: true });
+  }
+}
+
+async function addStep() {
+  const app = selected();
+  if (!app) return;
+  const titleInput = root.querySelector("[data-nextstep-title]");
+  const dateInput = root.querySelector('[data-datepicker][name="nextstep-date"]');
+  const title = (titleInput?.value || "").trim();
+  if (!title) {
+    titleInput?.focus();
+    return;
+  }
+  try {
+    const created = await api.createNextStep({
+      application_id: app.id,
+      title,
+      due_date: dateInput?.value || null,
+    });
+    state.nextSteps.push(created);
+    paint();
+  } catch (error) {
+    toast(error.detail || error.message, { error: true });
+  }
+}
+
+async function deleteStep(id) {
+  const step = state.nextSteps.find((n) => n.id === id);
+  if (!step) return;
+  const ok = await confirmModal({
+    title: "Delete next step?",
+    message: `“${step.title}” is removed outright — Done or Dismiss keep it as history instead.`,
+  });
+  if (!ok) return;
+  try {
+    await api.deleteNextStep(id);
+    state.nextSteps = state.nextSteps.filter((n) => n.id !== id);
+    paint();
+    toast("Next step deleted");
+  } catch (error) {
+    toast(error.detail || error.message, { error: true });
+  }
 }
 
 async function deleteSelected() {
@@ -1044,6 +1177,21 @@ function onClick(event) {
     }
     case "delete":
       deleteSelected();
+      break;
+    case "step-done":
+      patchStep(Number(target.dataset.id), { status: "done" }, "Done");
+      break;
+    case "step-dismiss":
+      patchStep(Number(target.dataset.id), { status: "dismissed" }, "Dismissed");
+      break;
+    case "step-reopen":
+      patchStep(Number(target.dataset.id), { status: "pending" }, "Reopened");
+      break;
+    case "step-delete":
+      deleteStep(Number(target.dataset.id));
+      break;
+    case "step-add":
+      addStep();
       break;
     case "doc-upload": {
       const input = root.querySelector("[data-doc-input]");
@@ -1280,6 +1428,11 @@ function onFocusOut(event) {
 }
 
 function onKeyDown(event) {
+  if (event.target.matches?.("[data-nextstep-title]") && event.key === "Enter") {
+    event.preventDefault();
+    addStep();
+    return;
+  }
   // chat-conventional composer: Enter sends, Shift+Enter inserts a newline
   if (!event.target.matches?.("[data-tailor-chat-input]")) return;
   if (event.key !== "Enter" || event.shiftKey) return;

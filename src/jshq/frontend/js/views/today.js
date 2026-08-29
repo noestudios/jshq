@@ -55,6 +55,7 @@ const state = {
   keyConfigured: null, // api-key status; null = unknown (fetch failed) → don't claim keyless
   suggestions: { title_exclude: [], reminders: [] },
   reminders: [],
+  nextSteps: [], // applications' next-step rows (v10; due surfaces filter to pending)
   events: [], // logged meetings/interviews (calendar fodder)
 };
 
@@ -91,11 +92,12 @@ function freshCutoff() {
 }
 
 async function load() {
-  const [jobs, refresh, suggestions, reminders, events, backup, keyStatus] = await Promise.all([
+  const [jobs, refresh, suggestions, reminders, nextSteps, events, backup, keyStatus] = await Promise.all([
     api.listJobs(),
     api.refreshStatus(),
     api.getSuggestions(),
     api.listReminders(),
+    api.listNextSteps(),
     api.listActivities({ types: "meeting,interview" }),
     api.backupStatus().catch(() => null), // a status hiccup must not blank Today
     // Only the day-one teaching card reads this — a failed fetch leaves it null
@@ -120,6 +122,7 @@ async function load() {
   state.keyConfigured = keyStatus ? !!keyStatus.configured && !keyStatus.rejected : null;
   state.suggestions = suggestions;
   state.reminders = reminders;
+  state.nextSteps = nextSteps;
   state.events = events;
 }
 
@@ -296,12 +299,35 @@ function reminderRow(reminder, today) {
     </div>`;
 }
 
+/* A next-step is a first-class row (v10): Done/Dismiss resolve it in place
+   (the row survives as history on the calendar and the application). No snooze
+   — the date is edited on the application, which the title links to. The "→"
+   is a non-colour cue that marks it as a next-step (colour-blind-safe).
+   Overdue/today badge reuses dueBadge. */
+function nextStepRow(n, today) {
+  return `
+    <div class="reminder-row reminder-nextstep">
+      <div class="reminder-main">
+        ${dueBadge(n, today)}
+        <a class="reminder-title" href="#/applications/${n.application_id}" data-action="open-application">→ ${esc(n.title)}</a>
+        ${n.entity_label ? `<span class="company-loc">${esc(n.entity_label)}</span>` : ""}
+      </div>
+      <div class="reminder-actions">
+        <button class="btn btn-ghost" data-action="nextstep-dismiss" data-id="${n.id}">Dismiss</button>
+        <button class="btn" data-action="nextstep-done" data-id="${n.id}">Done</button>
+      </div>
+    </div>`;
+}
+
 function upcomingRow(item) {
+  const badgeCls =
+    item.kind === "event" ? "rem-event" : item.kind === "nextstep" ? "rem-nextstep" : "rem-upcoming";
+  const title = item.kind === "nextstep" ? `→ ${esc(item.title)}` : esc(item.title);
   return `
     <div class="reminder-row" data-action="open-calendar" data-date="${esc(item.date)}" role="button" tabindex="0">
       <div class="reminder-main">
-        <span class="rem-badge ${item.kind === "event" ? "rem-event" : "rem-upcoming"}" title="${esc(fmtReminderDue(item.date, item.time))}">${esc(fmtDue(item.date))}</span>
-        <span class="reminder-title">${esc(item.title)}</span>
+        <span class="rem-badge ${badgeCls}" title="${esc(fmtReminderDue(item.date, item.time))}">${esc(fmtDue(item.date))}</span>
+        <span class="reminder-title">${title}</span>
         ${item.time ? `<span class="reminder-time">${esc(item.time)}</span>` : ""}
         ${item.label ? `<span class="company-loc">${esc(item.label)}</span>` : ""}
       </div>
@@ -319,6 +345,11 @@ function upcoming(today) {
       .filter((a) => a.date && a.date > today && a.date <= horizon)
       .map((a) => ({ kind: "event", date: a.date, time: null,
                      title: a.type, label: a.content })),
+    ...state.nextSteps
+      .filter((n) => n.status === "pending" && n.due_date &&
+                     n.due_date > today && n.due_date <= horizon)
+      .map((n) => ({ kind: "nextstep", date: n.due_date, time: null,
+                     title: n.title, label: n.entity_label })),
   ];
   return items.sort((a, b) => a.date.localeCompare(b.date) || (a.time || "").localeCompare(b.time || ""));
 }
@@ -683,7 +714,17 @@ function template() {
   );
 
   const today = localToday();
-  const due = state.reminders.filter((r) => !r.done && r.due_date <= today);
+  // Due/overdue reminders AND pending next-steps, merged and date-sorted.
+  // Resolved next-steps never nag here — history lives on the calendar and
+  // the application.
+  const due = [
+    ...state.reminders
+      .filter((r) => !r.done && r.due_date <= today)
+      .map((r) => ({ t: "reminder", date: r.due_date, reminder: r })),
+    ...state.nextSteps
+      .filter((n) => n.status === "pending" && n.due_date && n.due_date <= today)
+      .map((n) => ({ t: "nextstep", date: n.due_date, nextStep: n })),
+  ].sort((a, b) => a.date.localeCompare(b.date));
   const coming = upcoming(today);
   const cards = [
     ...state.suggestions.reminders.map(reminderSuggestionCard),
@@ -695,10 +736,13 @@ function template() {
     <div class="today">
       ${
         due.length
-          ? section("Reminders", rowList("reminders", due, (r) => reminderRow(r, today)), {
-              cls: "today-reminders",
-              count: due.length,
-            })
+          ? section(
+              "Reminders",
+              rowList("reminders", due, (i) =>
+                i.t === "nextstep" ? nextStepRow(i.nextStep, today) : reminderRow(i.reminder, today)
+              ),
+              { cls: "today-reminders", count: due.length }
+            )
           : ""
       }
       ${section(
@@ -792,6 +836,17 @@ async function patchReminder(id, body, message) {
     state.reminders = state.reminders.map((r) => (r.id === id ? updated : r));
     paint();
     toast(message);
+  } catch (error) {
+    toast(error.detail || error.message, { error: true });
+  }
+}
+
+async function resolveNextStep(id, status) {
+  try {
+    const saved = await api.patchNextStep(id, { status });
+    state.nextSteps = state.nextSteps.map((n) => (n.id === saved.id ? saved : n));
+    paint();
+    toast(status === "done" ? "Done" : "Dismissed");
   } catch (error) {
     toast(error.detail || error.message, { error: true });
   }
@@ -956,6 +1011,16 @@ function onClick(event) {
       break;
     case "done":
       patchReminder(Number(target.dataset.id), { done: true }, "Done");
+      break;
+    case "nextstep-done":
+      resolveNextStep(Number(target.dataset.id), "done");
+      break;
+    case "nextstep-dismiss":
+      resolveNextStep(Number(target.dataset.id), "dismissed");
+      break;
+    case "open-application":
+      // The anchor's own data-action stops closest() here; native href
+      // hash-navigates to the application (the download-ics precedent).
       break;
     case "snooze":
       patchReminder(
