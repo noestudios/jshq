@@ -79,6 +79,37 @@ def test_test_endpoint_503_without_key(client):
     assert r.status_code == 503
 
 
+def test_test_endpoint_reports_empty_balance_as_billing(client, monkeypatch):
+    """A configured key with no credits: Anthropic answers 400 with a
+    'credit balance is too low' body. The probe must say the account is out of
+    credits, not echo a bare status that reads as a broken key."""
+    import anthropic
+    import httpx
+
+    apikey.write_env_value(apikey.ENV_KEY, "sk-ant-" + "x" * 40)
+
+    class _NoCreditClient:
+        def __init__(self, *a, **k):
+            self.messages = self
+
+        async def create(self, *a, **k):
+            request = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
+            response = httpx.Response(400, request=request)
+            raise anthropic.APIStatusError(
+                "Your credit balance is too low to access the Anthropic API.",
+                response=response,
+                body=None,
+            )
+
+    monkeypatch.setattr(anthropic, "AsyncAnthropic", _NoCreditClient)
+    r = client.post("/api/settings/api-key/test")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is False
+    assert "out of credits" in body["error"]
+    assert "console.anthropic.com" in body["error"]
+
+
 def test_routes_precede_catchall(client):
     """/api/settings/api-key must not be swallowed by /api/settings/{key} (which
     would 404 it as an unknown editable setting)."""

@@ -1468,7 +1468,15 @@ async def test_api_key(db: sqlite3.Connection = Depends(get_db)) -> dict:
     except APIConnectionError:
         return {"ok": False, "error": "Couldn't reach api.anthropic.com. Check your connection."}
     except APIStatusError as exc:
-        return {"ok": False, "error": f"api.anthropic.com returned status {exc.status_code}."}
+        return {
+            "ok": False,
+            "error": errors.describe_provider_status(
+                exc.status_code,
+                getattr(exc, "message", "") or str(exc),
+                subject="api.anthropic.com",
+                billing="Add credit at console.anthropic.com (Plans & Billing)",
+            ),
+        }
 
 
 # Per-task AI model selection (Providers Tier 1): one `ai_models` settings row,
@@ -1594,7 +1602,16 @@ async def test_ai_providers(db: sqlite3.Connection = Depends(get_db)) -> dict:
     except oaicompat.APIConnectionError:
         return {"ok": False, "error": f"Couldn't reach {base_url}. Check the URL and that the server is running.", "models": []}
     except oaicompat.APIStatusError as exc:
-        return {"ok": False, "error": f"The endpoint returned status {exc.status_code}.", "models": []}
+        # oaicompat stringifies as "endpoint returned NNN: <excerpt>"; hand the
+        # composer just the excerpt so it isn't wrapped in a second status line.
+        excerpt = str(exc).split(": ", 1)[1] if ": " in str(exc) else ""
+        return {
+            "ok": False,
+            "error": errors.describe_provider_status(
+                exc.status_code, excerpt, subject="The endpoint"
+            ),
+            "models": [],
+        }
     return {"ok": True, "error": None, "models": result["models"]}
 
 

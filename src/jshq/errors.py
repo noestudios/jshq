@@ -59,6 +59,38 @@ def http_error(status: int, entry: ErrorCode, message: str | None = None) -> HTT
     return HTTPException(status_code=status, detail=fmt(entry, message))
 
 
+def describe_provider_status(
+    status_code: int,
+    raw_message: str | None = None,
+    *,
+    subject: str,
+    billing: str | None = None,
+) -> str:
+    """A human, actionable sentence for an AI provider's HTTP status, used by the
+    key/endpoint *test* surfaces (which return ``{ok, error}`` rather than a coded
+    detail). The common trap is a valid key on an empty balance: Anthropic answers
+    200-shaped requests with **400** and a "credit balance is too low" body, so a
+    bare "returned status 400" reads as a broken key when it is really unfunded.
+
+    ``raw_message`` is the provider's own error text — already human for Anthropic,
+    a body excerpt for the compat endpoint — surfaced when nothing more specific
+    applies. ``billing`` is an optional steer (where to add funds) for the
+    out-of-credit case; without it the provider's own words carry that."""
+    msg = (raw_message or "").strip()
+    low = msg.lower()
+    if "credit balance" in low or ("insufficient" in low and "credit" in low):
+        if billing:
+            return f"The key works, but the account is out of credits. {billing}, then test again."
+        return msg or f"{subject} reports the account is out of credits."
+    if status_code == 429:
+        return f"{subject} is rate-limiting the request. Wait a moment and test again."
+    if 500 <= status_code < 600:
+        return f"{subject} had a server error ({status_code}); that is on their end. Try again shortly."
+    if msg:
+        return f"{subject} rejected the request ({status_code}): {msg}"
+    return f"{subject} returned status {status_code}."
+
+
 # Marker lines for the generated user-manual section. The manual is under the
 # em-dash lint (test_docs_no_ai_tells), which is why notes are em-dash-free.
 APPENDIX_START = "<!-- error-codes:start (generated from src/jshq/errors.py by scripts/gen_error_appendix.py; do not hand-edit) -->"

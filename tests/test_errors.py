@@ -54,6 +54,44 @@ def test_http_error_carries_status_and_code():
     assert "[JSHQ-401]" in exc.detail
 
 
+# --- provider-status descriptions (key/endpoint test surfaces) ----------------
+
+
+def test_out_of_credit_400_reads_as_billing_not_broken_key():
+    """The reported trap: a valid key on an empty balance answers 400. The
+    message must say 'out of credits', not parrot the status code."""
+    msg = errors.describe_provider_status(
+        400,
+        "Your credit balance is too low to access the Anthropic API.",
+        subject="api.anthropic.com",
+        billing="Add credit at console.anthropic.com (Plans & Billing)",
+    )
+    assert "out of credits" in msg
+    assert "console.anthropic.com" in msg
+    assert "400" not in msg  # the code alone would mislead
+
+
+def test_out_of_credit_without_billing_surfaces_provider_words():
+    msg = errors.describe_provider_status(
+        400, "Your credit balance is too low.", subject="The endpoint"
+    )
+    assert "credit balance is too low" in msg
+
+
+def test_rate_limit_and_server_errors_are_plain_language():
+    assert "rate-limiting" in errors.describe_provider_status(429, subject="api.anthropic.com")
+    assert "their end" in errors.describe_provider_status(503, subject="api.anthropic.com")
+
+
+def test_unknown_status_surfaces_provider_message_then_falls_back():
+    with_msg = errors.describe_provider_status(
+        400, "model: bad-id not found", subject="The endpoint"
+    )
+    assert "bad-id not found" in with_msg and "(400)" in with_msg
+    bare = errors.describe_provider_status(418, subject="api.anthropic.com")
+    assert bare == "api.anthropic.com returned status 418."
+
+
 # --- the validation handler ---------------------------------------------------
 
 
