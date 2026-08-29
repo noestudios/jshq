@@ -13,6 +13,7 @@ import sys
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+from urllib.parse import urlsplit
 from uuid import uuid4
 
 import httpx
@@ -669,13 +670,36 @@ async def parse_job_url_endpoint(
         raise HTTPException(status_code=422, detail=str(exc))
 
 
+_TRACKING_PARAMS = {"gh_src", "ref", "src", "source"}  # plus any utm_* param
+
+
+def _url_key(url: str) -> str:
+    """Comparison key for posting URLs: lowercase, scheme/www./fragment/trailing-
+    slash insensitive. The query string is KEPT (minus tracking params, remainder
+    sorted) — it carries job identity on some boards (embedded greenhouse tenants
+    serve every posting at `/?gh_jid=<id>`; other careers sites use `?jobId=…`),
+    so stripping it would collapse every job on those boards into one key."""
+    parts = urlsplit(url.strip().lower())
+    host = parts.netloc.removeprefix("www.")
+    query = "&".join(
+        sorted(
+            p
+            for p in parts.query.split("&")
+            if p and not p.startswith("utm_") and p.split("=", 1)[0] not in _TRACKING_PARAMS
+        )
+    )
+    return f"{host}{parts.path.rstrip('/')}?{query}"
+
+
 @app.post("/api/jobs", status_code=201)
 async def create_job(body: JobCreateIn, db: sqlite3.Connection = Depends(get_db)) -> dict:
-    """Hand-enter a job for a company with no connectable ATS (the user found it
-    via the LinkedIn role links / careers page). Stored as source='manual' so the
-    refresh decay never closes it, scored immediately like an ingested job, and
-    dedupe-keyed on (company, url-or-title) so re-adding the same posting is a
-    409 rather than a duplicate."""
+    """Hand-enter a job the boards didn't surface (the user found it via the
+    LinkedIn role links / careers page). Stored as source='manual' (board decay
+    never closes it; the refresh liveness pass owns its closure), scored
+    immediately like an ingested job, and deduped two ways: by URL against ALL
+    same-company rows including ATS-ingested ones (the pasted URL is the same
+    posting the adapter pulled — creating it again would twin the row), then by
+    the manual dedupe key for title-only adds. Either match is a 409."""
     if db.execute("SELECT id FROM companies WHERE id = ?", (body.company_id,)).fetchone() is None:
         raise HTTPException(status_code=404, detail="company not found")
     key_seed = (body.url or body.title).strip().lower()
@@ -683,6 +707,24 @@ async def create_job(body: JobCreateIn, db: sqlite3.Connection = Depends(get_db)
     existing = db.execute(
         "SELECT id, status, title FROM jobs WHERE dedupe_key = ?", (dedupe_key,)
     ).fetchone()
+    if existing is None and body.url and body.url.strip():
+        wanted = _url_key(body.url)
+        existing = next(
+            (
+                row
+                for row in db.execute(
+                    # ORDER BY: if several rows share the URL (a pre-existing
+                    # ats/manual twin), report the ATS row — it's the one the
+                    # board keeps honest — then the oldest.
+                    "SELECT id, status, title, url FROM jobs "
+                    "WHERE company_id = ? AND url IS NOT NULL "
+                    "ORDER BY source = 'manual', id",
+                    (body.company_id,),
+                )
+                if _url_key(row["url"]) == wanted
+            ),
+            None,
+        )
     if existing:
         # Structured so the Add-job UI can offer to reactivate a dismissed/closed
         # duplicate instead of dead-ending on a flat "already tracked" error.

@@ -57,6 +57,13 @@ def refresh_job() -> None:
             if "new" in entry:
                 extra = f", {entry['new']} new, {entry['closed']} closed"
             lines.append(f"  {entry['company']}: {entry['status']}{extra}")
+        m = result.get("manual", {})
+        if m.get("error"):
+            lines.append(f"  manual-liveness: crashed ({m['error']})")
+        elif m.get("checked"):
+            lines.append(
+                f"  manual-liveness: {m['checked']} checked, {m['gone']} gone, {m['closed']} closed"
+            )
         s = result.get("scoring", {})
         if "skipped" in s:
             lines.append(f"  scoring: skipped ({s['skipped']})")

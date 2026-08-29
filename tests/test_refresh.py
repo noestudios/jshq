@@ -3,6 +3,7 @@
 import asyncio
 import json
 
+import httpx
 import pytest
 
 from jshq.ats import refresh as refresh_mod
@@ -857,3 +858,190 @@ def test_fetch_config_empty_everywhere_yields_no_terms(db):
     # so they are not include terms in this regime either.
     _set(db, "company_title_keywords", {"49": ["nurse manager"]})
     assert refresh_mod._fetch_config(db)["workday_search_terms"] == []
+# --- manual-row liveness (decay for source='manual' via their posting URL) ----
+
+
+@pytest.fixture(autouse=True)
+def _stub_manual_liveness(monkeypatch):
+    """Keep the suite offline: the liveness pass GETs each manual row's URL.
+    Default verdict is None (indeterminate = inert); tests override per-case."""
+
+    async def indeterminate(client, url):
+        return None
+
+    monkeypatch.setattr(refresh_mod, "_check_manual_url", indeterminate)
+
+
+def _verdict(monkeypatch, value):
+    async def check(client, url):
+        if isinstance(value, Exception):
+            raise value
+        return value
+
+    monkeypatch.setattr(refresh_mod, "_check_manual_url", check)
+
+
+def seed_manual(db, cid, *, status="active", url="https://example.com/manual/1",
+                miss_count=0, key="m1"):
+    db.execute(
+        """INSERT INTO jobs (company_id, title, status, miss_count, source, url,
+               dedupe_key, first_seen, last_seen)
+           VALUES (?, 'Manual Role', ?, ?, 'manual', ?, ?, '2026-06-01', '2026-06-01')""",
+        (cid, status, miss_count, url, f"manual:{cid}:{key}"),
+    )
+    db.commit()
+    return f"manual:{cid}:{key}"
+
+
+def test_liveness_alive_resets_miss_and_bumps_last_seen(db, seed_company, monkeypatch):
+    cid = seed_company()
+    key = seed_manual(db, cid, miss_count=1)
+    _verdict(monkeypatch, True)
+    result = run(db, {"greenhouse": []})
+    row = job_row(db, key)
+    assert row["miss_count"] == 0
+    assert row["last_seen"] == result["last_refresh"]
+    assert row["status"] == "active"
+    assert result["manual"] == {"checked": 1, "gone": 0, "closed": 0}
+
+
+def test_liveness_gone_twice_closes_active_row(db, seed_company, monkeypatch):
+    cid = seed_company()
+    key = seed_manual(db, cid)
+    _verdict(monkeypatch, False)
+    first = run(db, {"greenhouse": []})
+    assert first["manual"] == {"checked": 1, "gone": 1, "closed": 0}
+    row = job_row(db, key)
+    assert (row["status"], row["miss_count"]) == ("active", 1)
+    second = run(db, {"greenhouse": []})
+    assert second["manual"] == {"checked": 1, "gone": 1, "closed": 1}
+    row = job_row(db, key)
+    assert (row["status"], row["miss_count"]) == ("closed", 2)
+
+
+def test_liveness_applied_accrues_misses_but_keeps_status(db, seed_company, monkeypatch):
+    cid = seed_company()
+    key = seed_manual(db, cid, status="applied")
+    _verdict(monkeypatch, False)
+    run(db, {"greenhouse": []})
+    result = run(db, {"greenhouse": []})
+    row = job_row(db, key)
+    # miss_count >= MISS_LIMIT on an applied row IS the "no longer listed"
+    # signal (frontend isDelisted); the status is user-owned and never flipped.
+    assert (row["status"], row["miss_count"]) == ("applied", 2)
+    assert result["manual"]["closed"] == 0
+
+
+def test_liveness_indeterminate_is_inert(db, seed_company):
+    cid = seed_company()
+    key = seed_manual(db, cid, miss_count=1)
+    result = run(db, {"greenhouse": []})  # autouse stub: verdict None
+    row = job_row(db, key)
+    assert (row["status"], row["miss_count"]) == ("active", 1)
+    assert result["manual"] == {"checked": 1, "gone": 0, "closed": 0}
+
+
+def test_liveness_reactivated_row_survives_indeterminate_check(db, seed_company):
+    # closed at the limit -> user reactivates (miss_count stays stale at 2) ->
+    # next check is indeterminate. The flip keys on a gone verdict THIS run,
+    # never on the stale count, so the row must stay active.
+    cid = seed_company()
+    key = seed_manual(db, cid, miss_count=2)  # status active = post-reactivate
+    run(db, {"greenhouse": []})  # autouse stub: verdict None
+    assert job_row(db, key)["status"] == "active"
+
+
+def test_liveness_crash_still_stamps_last_refresh(db, seed_company, monkeypatch):
+    cid = seed_company()
+    seed_manual(db, cid)
+    _verdict(monkeypatch, RuntimeError("boom"))
+    result = run(db, {"greenhouse": []})
+    assert _setting(db, "last_refresh") == result["last_refresh"]
+    assert "boom" in result["manual"]["error"]
+
+
+def test_liveness_skipped_on_scoped_runs(db, seed_company, monkeypatch):
+    cid = seed_company()
+    key = seed_manual(db, cid)
+    _verdict(monkeypatch, False)
+    result = run(db, {"greenhouse": []}, company_ids=[cid])
+    assert job_row(db, key)["miss_count"] == 0
+    assert result["manual"] == {"checked": 0, "gone": 0, "closed": 0}
+
+
+def test_liveness_skips_dismissed_and_urlless_rows(db, seed_company, monkeypatch):
+    cid = seed_company()
+    dismissed = seed_manual(db, cid, status="dismissed", key="m-dis")
+    db.execute(
+        "INSERT INTO jobs (company_id, title, status, miss_count, source, dedupe_key, "
+        "first_seen, last_seen) VALUES (?, 'No URL', 'active', 0, 'manual', ?, "
+        "'2026-06-01', '2026-06-01')",
+        (cid, f"manual:{cid}:m-nourl"),
+    )
+    db.commit()
+    _verdict(monkeypatch, False)
+    result = run(db, {"greenhouse": []})
+    assert result["manual"] == {"checked": 0, "gone": 0, "closed": 0}
+    assert job_row(db, dismissed)["miss_count"] == 0
+    assert job_row(db, f"manual:{cid}:m-nourl")["miss_count"] == 0
+
+
+def _fake_client(status: int, final_url: str):
+    """Client whose GET resolves to `status` at `final_url` (redirects already
+    followed, mirroring follow_redirects=True — httpx.Response.url is the final
+    hop's URL)."""
+
+    async def get(url):
+        return httpx.Response(status, request=httpx.Request("GET", final_url))
+
+    from types import SimpleNamespace
+
+    return SimpleNamespace(get=get)
+
+
+# Bound at import time — the autouse _stub_manual_liveness fixture replaces the
+# module attribute, and these tests exercise the real classifier.
+_REAL_CHECK_URL = refresh_mod._check_manual_url
+
+
+def _check(client, url):
+    return asyncio.run(_REAL_CHECK_URL(client, url))
+
+
+def test_check_url_200_same_path_is_alive():
+    url = "https://boards.greenhouse.io/exampleco/jobs/4100200300"
+    # host hop (boards. -> job-boards.) with the path intact = still the posting
+    client = _fake_client(200, "https://job-boards.greenhouse.io/exampleco/jobs/4100200300")
+    assert _check(client, url) is True
+
+
+def test_check_url_redirect_off_the_posting_path_is_gone():
+    # greenhouse delists by 302ing the posting to the board root (?error=true)
+    url = "https://job-boards.greenhouse.io/exampleco/jobs/4100200300"
+    client = _fake_client(200, "https://job-boards.greenhouse.io/exampleco?error=true")
+    assert _check(client, url) is False
+
+
+def test_check_url_slug_canonicalization_is_alive():
+    url = "https://x.example/jobs/123"
+    client = _fake_client(200, "https://x.example/jobs/123-senior-designer")
+    assert _check(client, url) is True
+
+
+def test_check_url_hard_404_is_gone_and_403_is_indeterminate():
+    url = "https://x.example/jobs/123"
+    assert _check(_fake_client(404, url), url) is False
+    assert _check(_fake_client(410, url), url) is False
+    assert _check(_fake_client(403, url), url) is None
+    assert _check(_fake_client(503, url), url) is None
+
+
+def test_check_url_transport_failure_is_indeterminate(monkeypatch):
+    from types import SimpleNamespace
+
+    monkeypatch.setattr("jshq.ats.adapters._http._RETRY_DELAY_S", 0)
+
+    async def get(url):
+        raise httpx.ConnectError("down")
+
+    assert _check(SimpleNamespace(get=get), "https://x.example/jobs/1") is None

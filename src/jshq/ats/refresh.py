@@ -16,11 +16,13 @@ import json
 import logging
 import sqlite3
 from datetime import datetime, timezone
+from urllib.parse import urlsplit
 
 import httpx
 
 from .. import db, notify, scoring
 from .adapters import ADAPTERS, CONFIG_AWARE
+from .adapters._http import _send
 from .detect import TIMEOUT, USER_AGENT, detect_company, write_result
 from .normalize import (
     AdapterError,
@@ -306,6 +308,86 @@ async def _fetch_all(companies: list[sqlite3.Row], title_filter, config=None) ->
         return await asyncio.gather(*(guarded(c) for c in companies))
 
 
+async def _check_manual_url(client: httpx.AsyncClient, url: str) -> bool | None:
+    """Liveness read on one manually-tracked posting URL. True = alive, False =
+    gone, None = no evidence either way (403/5xx/transport failure — a bot-block
+    or outage is not proof the job closed).
+
+    Gone is a hard 404/410 — or a 200 whose followed redirects landed on a
+    DIFFERENT PATH: boards delist by redirecting the posting to the board root
+    (greenhouse 302s dead jobs to /<board>?error=true — measured live on a
+    delisted posting, 2026-08-25). Paths only, hosts ignored: live greenhouse
+    jobs 301-hop boards.greenhouse.io → job-boards.greenhouse.io with the path
+    intact, and a canonical slug append (/jobs/123 → /jobs/123-title) still
+    counts as the same posting. Soft-404s (a 200 on the SAME path saying "no
+    longer accepting applications") still read alive — accepted. Module-level
+    so the test suite can stub it (tests never touch the network)."""
+    try:
+        r = await _send(lambda: client.get(url), f"GET {url}")
+    except AdapterError:
+        return None
+    if r.status_code in (404, 410):
+        return False
+    if r.status_code != 200:
+        return None
+    asked = urlsplit(url).path.rstrip("/").lower()
+    landed = r.url.path.rstrip("/").lower()
+    if landed == asked or landed.startswith((asked + "/", asked + "-")):
+        return True
+    return False
+
+
+async def _manual_liveness(conn: sqlite3.Connection, now: str) -> dict:
+    """Decay for manually-added jobs. Board decay (_apply_jobs) is
+    source='ats'-scoped — a manual row isn't on any polled board — so its
+    "still listed?" evidence comes from fetching its own posting URL, feeding
+    the same miss_count/MISS_LIMIT machinery: alive resets the count and bumps
+    last_seen, gone increments it. A row flips to closed ONLY on a gone check
+    that leaves it at the limit — never from a stale count alone, so a
+    reactivated row can't re-close on an indeterminate check. Applied rows keep
+    their status; their miss_count is the UI's "no longer listed" signal
+    (isDelisted), same as board-tracked applies. Dismissed rows are exempt
+    (already decided) and scoring columns are never touched."""
+    rows = conn.execute(
+        "SELECT id, url, status, miss_count FROM jobs WHERE source = 'manual'"
+        " AND status IN ('active', 'applied') AND url IS NOT NULL AND url != ''"
+    ).fetchall()
+    if not rows:
+        return {"checked": 0, "gone": 0, "closed": 0}
+
+    sem = asyncio.Semaphore(CONCURRENCY)
+    async with httpx.AsyncClient(
+        timeout=FETCH_TIMEOUT, follow_redirects=True, headers={"User-Agent": USER_AGENT}
+    ) as client:
+
+        async def guarded(row: sqlite3.Row):
+            async with sem:
+                return row, await _check_manual_url(client, row["url"])
+
+        results = await asyncio.gather(*(guarded(r) for r in rows))
+
+    gone = closed = 0
+    for row, verdict in results:
+        if verdict is True:
+            conn.execute(
+                "UPDATE jobs SET miss_count = 0, last_seen = ? WHERE id = ?",
+                (now, row["id"]),
+            )
+        elif verdict is False:
+            gone += 1
+            misses = row["miss_count"] + 1
+            conn.execute(
+                "UPDATE jobs SET miss_count = ? WHERE id = ?", (misses, row["id"])
+            )
+            if misses >= MISS_LIMIT and row["status"] == "active":
+                conn.execute(
+                    "UPDATE jobs SET status = 'closed' WHERE id = ?", (row["id"],)
+                )
+                closed += 1
+    conn.commit()
+    return {"checked": len(rows), "gone": gone, "closed": closed}
+
+
 async def run_refresh(
     conn: sqlite3.Connection | None = None, *, company_ids: list[int] | None = None
 ) -> dict:
@@ -473,6 +555,18 @@ async def _run(conn: sqlite3.Connection, company_ids: list[int] | None = None) -
         conn.commit()
         report.append({"company": company["name"], "status": status, **stats})
 
+    # Manual-row liveness: board decay can't see manually-added jobs, so their
+    # posting URLs get fetched directly (see _manual_liveness). Isolated like
+    # scoring below — a crash here must not break the last_refresh staleness
+    # contract. Scoped retry runs skip it: they're board-scoped recovery, and
+    # per-row fetches don't belong on that fast path.
+    manual_report = {"checked": 0, "gone": 0, "closed": 0}
+    if not scoped:
+        try:
+            manual_report = await _manual_liveness(conn, now)
+        except Exception as e:
+            manual_report["error"] = f"{type(e).__name__}: {e}"
+
     # A run that reached the internet (at least one board responded, or a real
     # HTTP error came back) is no longer an outage — clear any stale marker. A
     # scoped run clears it only on that evidence: a 7-board retry where every
@@ -503,6 +597,7 @@ async def _run(conn: sqlite3.Connection, company_ids: list[int] | None = None) -
         "refreshed": len(report) - len(failures),
         "total": len(report),
         "failures": failures,
+        "manual": manual_report,
     }
     if scoped:
         report_payload["scope"] = "failed"
@@ -537,7 +632,12 @@ async def _run(conn: sqlite3.Connection, company_ids: list[int] | None = None) -
             msg += f" · {scoring_report['scored']} jobs scored"
         await asyncio.to_thread(notify.send, msg)
 
-    return {"last_refresh": now, "companies": report, "scoring": scoring_report}
+    return {
+        "last_refresh": now,
+        "companies": report,
+        "scoring": scoring_report,
+        "manual": manual_report,
+    }
 
 
 async def _fetch_and_score_one(conn: sqlite3.Connection, company_id: int) -> str:

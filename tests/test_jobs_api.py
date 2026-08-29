@@ -454,3 +454,48 @@ def test_trigger_refresh_scope_all_matches_bare_post(client, monkeypatch):
 
 def test_trigger_refresh_bogus_scope_rejected(client):
     assert client.post("/api/refresh", json={"scope": "sideways"}).status_code == 422
+
+
+def test_create_manual_collides_with_ats_row_by_url(client, db, seed_company):
+    """A pasted URL the ATS already ingested must 409 against that row, not twin
+    it (pasting the LinkedIn-tracked link of an already-pulled posting). Matching
+    is scheme/www./tracking-param/trailing-slash insensitive."""
+    cid = seed_company(name="Acmeco")
+    ats_id = seed_job(db, cid, title="Staff Product Designer, Mobile",
+                      url="https://boards.example/acmeco/jobs/4100200300")
+    dup = client.post("/api/jobs", json={
+        "company_id": cid,
+        "title": "Staff Product Designer, Mobile",
+        "url": "http://www.boards.example/acmeco/jobs/4100200300/?utm_source=linkedin",
+    })
+    assert dup.status_code == 409
+    detail = dup.json()["detail"]
+    assert detail["job_id"] == ats_id
+    assert detail["status"] == "active"
+    assert detail["title"] == "Staff Product Designer, Mobile"
+    assert len(client.get(f"/api/jobs?company_id={cid}").json()) == 1
+
+
+def test_create_manual_identity_query_params_do_not_collide(client, db, seed_company):
+    """Some boards carry job identity in the query (embedded greenhouse tenants
+    are all /?gh_jid=<id>) — a different query must NOT read as the same posting."""
+    cid = seed_company(name="Exampleco")
+    seed_job(db, cid, url="https://careers.example.com/?gh_jid=100")
+    r = client.post("/api/jobs", json={
+        "company_id": cid,
+        "title": "UX Designer",
+        "url": "https://careers.example.com/?gh_jid=200",
+    })
+    assert r.status_code == 201
+
+
+def test_create_manual_same_url_other_company_creates(client, db, seed_company):
+    a = seed_company(name="CoA")
+    b = seed_company(name="CoB")
+    seed_job(db, a, url="https://boards.example/shared/jobs/1")
+    r = client.post("/api/jobs", json={
+        "company_id": b,
+        "title": "Product Designer",
+        "url": "https://boards.example/shared/jobs/1",
+    })
+    assert r.status_code == 201

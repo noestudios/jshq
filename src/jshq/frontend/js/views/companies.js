@@ -1206,9 +1206,19 @@ async function handleAlreadyTracked(info, company) {
       toast(error.detail || error.message, { error: true });
     }
   } else {
-    // active / applied — already visible / in the pipeline, nothing to reactivate
+    // active / applied — already visible / in the pipeline, nothing to
+    // reactivate. Offer the jump instead of a toast: toast() is textContent-only
+    // (no link), and the collision can now be an ATS-ingested row the user never
+    // noticed (e.g. a tier-1 zero), so "where is it?" deserves a one-click
+    // answer. confirmModal closes itself before resolving.
     const where = status === "applied" ? "applications" : "jobs list";
-    toast(`Already tracked — “${title}” is already in your ${where}.`);
+    const go = await confirmModal({
+      title: "Already tracked",
+      message: `“${title}” is already in your ${where}.`,
+      confirmLabel: "View job",
+      confirmClass: "btn-accent",
+    });
+    if (go) location.hash = "#/jobs/" + job_id;
   }
 }
 
